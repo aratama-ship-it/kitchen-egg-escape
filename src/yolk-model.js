@@ -85,6 +85,10 @@ export function advanceYolk(state, target, dt) {
     z: state.position.z + velocity.z * dt,
   }, YOLK_MAX_OFFSET);
 
+  // 黄身が殻の内壁へ達したら、外向きの速度はそこで止まる。
+  // その分の運動量は消えるのではなく殻へ渡る。返り値の wallImpulse が
+  // 「内側から蹴られた分」で、これを殻の剛体へ与えると卵が動き出す。
+  const wallImpulse = { x: 0, y: 0, z: 0 };
   if (Math.hypot(position.x, position.y, position.z) >= YOLK_MAX_OFFSET * 0.999) {
     const normalLength = Math.max(1e-9, Math.hypot(position.x, position.y, position.z));
     const nx = position.x / normalLength;
@@ -95,8 +99,11 @@ export function advanceYolk(state, target, dt) {
       velocity.x -= nx * outwardSpeed;
       velocity.y -= ny * outwardSpeed;
       velocity.z -= nz * outwardSpeed;
+      wallImpulse.x = nx * outwardSpeed * YOLK_MASS;
+      wallImpulse.y = ny * outwardSpeed * YOLK_MASS;
+      wallImpulse.z = nz * outwardSpeed * YOLK_MASS;
     }
   }
 
-  return { position, velocity, acceleration };
+  return { position, velocity, acceleration, wallImpulse };
 }

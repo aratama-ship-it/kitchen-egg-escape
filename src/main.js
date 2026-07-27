@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import RAPIER from "@dimforge/rapier3d";
 import {
+  EGG_MAX_RADIUS,
   SHELL_MASS,
   createEggColliderPoints,
   createEggGeometry,
@@ -10,6 +11,7 @@ import {
   YOLK_REST_OFFSET,
   YOLK_VISUAL_RADIUS,
   advanceYolk,
+  rotateByInverse,
   spherePrincipalInertia,
   yolkTargetFor,
 } from "./yolk-model.js";
@@ -19,6 +21,7 @@ import {
 } from "./impact-model.js";
 import {
   STAGES,
+  SURFACE_FRICTION,
   draftForceAt,
   stageStartPosition,
   stageStartRotation,
@@ -52,10 +55,14 @@ const FIXED_STEP = 1 / 120;
 // 物理はそのままに、時間だけ速く進める。衝突の強さの関係は変わらない。
 const TIME_SCALE = 1.7;
 const MAX_STEPS_PER_FRAME = 40;
-// 中途半端なドラッグでは卵が転がり出せないため、指を置いた時点で
-// すでに転がる強さから始める。
-const MIN_POINTER_STRENGTH = 0.72;
-const KEYBOARD_STRENGTH = 0.9;
+// 撞く強さ。黄身へ与える速度で、1.8 m/sを超えると重心が動きすぎて計算が荒れる。
+const SHOT_MIN_SPEED = 0.75;
+const SHOT_MAX_SPEED = 1.8;
+const YOLK_SPEED_CAP = 1.8;
+const SHOT_COOLDOWN = 0.28;
+// 引いた距離がこの画素数で最大の力になる。
+const AIM_FULL_PULL = 132;
+const AIM_DEAD_ZONE = 10;
 const IDENTITY_ROTATION = { x: 0, y: 0, z: 0, w: 1 };
 const YOLK_INERTIA = spherePrincipalInertia(YOLK_MASS, YOLK_VISUAL_RADIUS);
 const NORMAL_EXPOSURE = 1.08;
@@ -74,26 +81,25 @@ let stageIndex = 0;
 let stageHandle = null;
 let stageTime = 0;
 let clearedCount = 0;
-// 障害物の角に噛むと、同じ向きへ押し続けるかぎり抜けられない。
-// 横へ逃がせば必ず外れるので、止まっていることだけを伝える。
-let pressedAge = 0;
+let shotCooldown = 0;
+let shotsTaken = 0;
+// 角に噛んだときは横へ狙えば必ず外れる。何度撞いても進めないときだけ伝える。
+let stuckShots = 0;
+let progressMark = 0;
+let settledNoted = true;
 
-const currentStage = () => STAGES[stageIndex];
-
-const input = {
+// 狙い。撞く向き（進みたい向き）と、引いた量から決まる力。
+const aim = {
   active: false,
   pointerId: null,
-  startX: 0,
-  startY: 0,
-  dx: 0,
-  dy: 0,
-  keyboardX: 0,
-  keyboardZ: 0,
-  commandX: 0,
-  commandZ: 0,
-  commandStrength: 0,
-  releaseAge: Number.POSITIVE_INFINITY,
+  originX: 0,
+  originY: 0,
+  x: 0,
+  z: 1,
+  power: 0,
 };
+
+const currentStage = () => STAGES[stageIndex];
 
 const yolkState = {
   position: { x: 0, y: -YOLK_REST_OFFSET, z: 0 },
@@ -153,35 +159,67 @@ const eventQueue = new RAPIER.EventQueue(true);
 
 scene.add(breakState.group);
 
+// 狙いは床の上に置く。低い視点なので、空中の矢印より床の帯のほうが読みやすい。
+const aimGeometry = new THREE.PlaneGeometry(1, 1);
+aimGeometry.translate(0, 0.5, 0);
+const aimMaterial = new THREE.MeshBasicMaterial({
+  color: 0xf0c94b,
+  transparent: true,
+  opacity: 0,
+  depthWrite: false,
+});
+const aimMesh = new THREE.Mesh(aimGeometry, aimMaterial);
+aimMesh.rotation.x = -Math.PI / 2;
+aimMesh.renderOrder = 4;
+aimMesh.visible = false;
+scene.add(aimMesh);
+
+// 動かしているのは黄身なので、それが見えないと何をしているのか分からない。
+// 殻を薄い磁器のように透かし、中の白身と黄身を主役として見せる。
 const eggGeometry = createEggGeometry();
 const shellMaterial = new THREE.MeshPhysicalMaterial({
-  color: 0xf3ead2,
-  roughness: 0.32,
+  color: 0xf6efdd,
+  roughness: 0.26,
   metalness: 0,
-  transmission: 0.12,
-  thickness: 0.009,
   transparent: true,
-  opacity: 0.98,
-  side: THREE.FrontSide,
-  depthWrite: true,
+  opacity: 0.34,
+  side: THREE.DoubleSide,
+  depthWrite: false,
 });
 const shellMesh = new THREE.Mesh(eggGeometry, shellMaterial);
 shellMesh.castShadow = true;
 shellMesh.receiveShadow = true;
-shellMesh.renderOrder = 2;
+shellMesh.renderOrder = 3;
 scene.add(shellMesh);
 
-const yolkGeometry = new THREE.SphereGeometry(YOLK_VISUAL_RADIUS, 28, 18);
-const yolkMaterial = new THREE.MeshPhysicalMaterial({
-  color: 0xe6a518,
-  roughness: 0.38,
-  clearcoat: 0.18,
-  transparent: true,
-  opacity: 0.92,
+// 白身。黄身より一回り大きく、ほとんど透明。黄身が動くとき遅れて揺れる。
+const albumenMesh = new THREE.Mesh(
+  new THREE.SphereGeometry(YOLK_VISUAL_RADIUS * 1.85, 24, 16),
+  new THREE.MeshPhysicalMaterial({
+    color: 0xdfe7dc,
+    roughness: 0.1,
+    transmission: 0.6,
+    thickness: 0.004,
+    transparent: true,
+    opacity: 0.3,
+    depthWrite: false,
+  })
+);
+albumenMesh.scale.set(1.05, 0.78, 1.02);
+albumenMesh.renderOrder = 1;
+shellMesh.add(albumenMesh);
+
+const yolkGeometry = new THREE.SphereGeometry(YOLK_VISUAL_RADIUS, 32, 20);
+const yolkMaterial = new THREE.MeshStandardMaterial({
+  color: 0xe8a411,
+  roughness: 0.34,
+  metalness: 0,
+  emissive: 0xd07d0a,
+  emissiveIntensity: 0.28,
 });
 const yolkMesh = new THREE.Mesh(yolkGeometry, yolkMaterial);
-yolkMesh.scale.set(1.08, 0.86, 1.02);
-yolkMesh.renderOrder = 1;
+yolkMesh.scale.set(1.06, 0.88, 1.02);
+yolkMesh.renderOrder = 2;
 shellMesh.add(yolkMesh);
 
 const firstStart = stageStartPosition(STAGES[0]);
@@ -264,54 +302,110 @@ function applyYolkMassProperties() {
   );
 }
 
+// 狙いをつけているあいだ、黄身は撞く向きと反対側へ引かれて溜まる。
+// 放つと、その溜めが速度になって内壁へ向かう。
 function currentYolkTarget() {
-  const keyboardMagnitude = Math.hypot(input.keyboardX, input.keyboardZ);
-  const commandDecay = input.active ? 1 : Math.exp(-input.releaseAge * 2.2);
-  // 指を置いた時点で転がる強さから始め、ドラッグ量で上へ伸ばす。
-  // 指を離したあとは、この全体が減衰して抜けていく。
-  const dragStrength = input.commandStrength > 0
-    ? MIN_POINTER_STRENGTH + (1 - MIN_POINTER_STRENGTH) * input.commandStrength
-    : 0;
-  const strengthNow = dragStrength * commandDecay;
-  const hasPointer = strengthNow > 0.015;
-
-  let commandX = 0;
-  let commandZ = 0;
-  let strength = 0;
-  if (hasPointer) {
-    commandX = input.commandX;
-    commandZ = input.commandZ;
-    strength = strengthNow;
-  } else if (keyboardMagnitude > 0) {
-    commandX = input.keyboardX / keyboardMagnitude;
-    commandZ = input.keyboardZ / keyboardMagnitude;
-    strength = KEYBOARD_STRENGTH;
+  if (!aim.active || aim.power <= 0) {
+    return yolkTargetFor({ rotation: eggBody.rotation() });
   }
-
   return yolkTargetFor({
     rotation: eggBody.rotation(),
-    commandX,
-    commandZ,
-    strength,
+    commandX: -aim.x,
+    commandZ: -aim.z,
+    strength: aim.power,
   });
+}
+
+function isEggSettled() {
+  const velocity = eggBody.linvel();
+  return Math.hypot(velocity.x, velocity.y, velocity.z) < 0.03;
+}
+
+function capYolkSpeed() {
+  const speed = Math.hypot(
+    yolkState.velocity.x,
+    yolkState.velocity.y,
+    yolkState.velocity.z
+  );
+  if (speed <= YOLK_SPEED_CAP) return;
+  const scale = YOLK_SPEED_CAP / speed;
+  yolkState.velocity.x *= scale;
+  yolkState.velocity.y *= scale;
+  yolkState.velocity.z *= scale;
+}
+
+// 蹴られた勢いを転がりに変える。卵が「ゴロン」と回るのはここ。
+// ただし床が滑るほど転がりには変わらず、そのまま滑っていく。
+function rollWithKick() {
+  const velocity = eggBody.linvel();
+  const horizontal = Math.hypot(velocity.x, velocity.z);
+  if (horizontal < 1e-5) return;
+  const stage = currentStage();
+  const friction = SURFACE_FRICTION[surfaceAt(stage, eggBody.translation().z)];
+  const grip = THREE.MathUtils.clamp(friction / SURFACE_FRICTION.dry, 0, 1);
+  const spin = (horizontal / EGG_MAX_RADIUS) * grip;
+  const angular = eggBody.angvel();
+  eggBody.setAngvel(
+    {
+      x: (velocity.z / horizontal) * spin,
+      y: angular.y,
+      z: (-velocity.x / horizontal) * spin,
+    },
+    true
+  );
+}
+
+// 撞く。黄身へ狙った向きの速度を与えるだけで、殻には直接触れない。
+function fireShot(dirX, dirZ, power) {
+  if (mode !== "playing" || shotCooldown > 0) return;
+  const length = Math.hypot(dirX, dirZ);
+  if (length < 1e-6) return;
+
+  const speed = SHOT_MIN_SPEED + (SHOT_MAX_SPEED - SHOT_MIN_SPEED) * power;
+  const rotation = eggBody.rotation();
+  const local = rotateByInverse(rotation, {
+    x: (dirX / length) * speed,
+    y: 0,
+    z: (dirZ / length) * speed,
+  });
+  yolkState.velocity = local;
+  shotCooldown = SHOT_COOLDOWN;
+  shotsTaken += 1;
+  settledNoted = false;
+  playShotSound(power);
+  dragHint.classList.add("is-hidden");
+  firstInputMade = true;
 }
 
 function physicsStep() {
   playAge += FIXED_STEP;
   stageTime += FIXED_STEP;
   stageHandle.update(stageTime);
-  if (!input.active && Number.isFinite(input.releaseAge)) {
-    input.releaseAge += FIXED_STEP;
-    if (input.releaseAge > 2.4) {
-      input.commandStrength = 0;
-      input.releaseAge = Number.POSITIVE_INFINITY;
+  shotCooldown = Math.max(0, shotCooldown - FIXED_STEP);
+  if (shotCooldown === 0 && shotsTaken > 0 && !aim.active && isEggSettled()) {
+    if (!settledNoted) {
+      settledNoted = true;
+      noteShotOutcome();
     }
   }
+
   const nextYolk = advanceYolk(yolkState, currentYolkTarget(), FIXED_STEP);
   yolkState.position = nextYolk.position;
   yolkState.velocity = nextYolk.velocity;
   yolkState.acceleration = nextYolk.acceleration;
+  capYolkSpeed();
   applyYolkMassProperties();
+
+  // 黄身が内壁を蹴った分を殻へ渡す。卵が動く力はここだけから来る。
+  const kick = nextYolk.wallImpulse;
+  if (kick.x || kick.y || kick.z) {
+    const rotation = eggBody.rotation();
+    const worldKick = new THREE.Vector3(kick.x, kick.y, kick.z).applyQuaternion(
+      new THREE.Quaternion(rotation.x, rotation.y, rotation.z, rotation.w)
+    );
+    eggBody.applyImpulse(worldKick, true);
+    rollWithKick();
+  }
   const draft = draftForceAt(currentStage(), eggBody.translation().z);
   if (draft) eggBody.applyImpulse({ x: draft * FIXED_STEP, y: 0, z: 0 }, true);
 
@@ -344,20 +438,18 @@ function physicsStep() {
   }
 }
 
-// 指を置いているのに卵がまったく動かないときだけ、横へ逃がすよう伝える。
-// 助けを出しすぎないよう、動き出した瞬間に消す。
-function updatePressedState() {
-  const velocity = eggBody.linvel();
-  const speed = Math.hypot(velocity.x, velocity.y, velocity.z);
-  const pushing = input.active || Math.hypot(input.keyboardX, input.keyboardZ) > 0;
-
-  if (pushing && speed < 0.012) pressedAge += FIXED_STEP;
-  else pressedAge = 0;
-
-  const shouldShow = pressedAge > 0.9;
+// 何度撞いても進めないときだけ、横へ狙うよう伝える。
+// 角に噛んだ卵は、横（障害物と反対側）へ撞けば必ず外れる。
+function noteShotOutcome() {
+  const advanced = eggBody.translation().z - progressMark;
+  progressMark = eggBody.translation().z;
+  stuckShots = advanced < 0.05 ? stuckShots + 1 : 0;
+  const shouldShow = stuckShots >= 2;
   if (shouldShow === stallHint.classList.contains("is-visible")) return;
   stallHint.classList.toggle("is-visible", shouldShow);
-  if (shouldShow) srStatus.textContent = "何かに当たって止まっています。横へ逃がしてください。";
+  if (shouldShow) {
+    srStatus.textContent = "進めていません。障害物と反対の横へ狙ってください。";
+  }
 }
 
 function strongestObjectImpact(speed) {
@@ -410,6 +502,7 @@ function frame(time) {
   if (breakState.active) updateBreakEffect(elapsed);
 
   syncEggVisual();
+  updateAimIndicator();
   updateCamera(elapsed);
   if (time - lastHudUpdate > 80) {
     updateHud();
@@ -429,8 +522,22 @@ function syncEggVisual() {
     yolkState.position.y,
     yolkState.position.z
   );
-  shellMaterial.opacity = input.active ? 0.76 : 0.98;
-  yolkMaterial.opacity = input.active ? 0.98 : 0.72;
+  albumenMesh.position.lerp(yolkMesh.position, 0.18);
+  yolkMaterial.emissiveIntensity = aim.active ? 0.5 + aim.power * 0.5 : 0.28;
+}
+
+// 引いた量がそのまま床の帯の長さになる。撞く前に飛距離の見当がつく。
+function updateAimIndicator() {
+  const showing = aim.active && aim.power > 0 && mode === "playing";
+  aimMesh.visible = showing;
+  if (!showing) return;
+
+  const position = eggBody.translation();
+  const reach = 0.09 + aim.power * 0.34;
+  aimMesh.position.set(position.x, 0.0026, position.z);
+  aimMesh.scale.set(0.028 + aim.power * 0.022, reach, 1);
+  aimMesh.rotation.set(-Math.PI / 2, 0, Math.atan2(aim.x, aim.z));
+  aimMaterial.opacity = 0.3 + aim.power * 0.45;
 }
 
 function updateCamera(dt) {
@@ -454,11 +561,13 @@ function updateCamera(dt) {
 function shatterEgg(impact) {
   if (mode !== "playing") return;
   mode = "breaking";
-  input.active = false;
-  input.pointerId = null;
+  aim.active = false;
+  aim.pointerId = null;
+  aim.power = 0;
   canvas.classList.remove("is-dragging");
   dragHint.classList.add("is-hidden");
-  pressedAge = 0;
+  stuckShots = 0;
+  settledNoted = true;
   stallHint.classList.remove("is-visible");
 
   const position = eggBody.translation();
@@ -764,6 +873,23 @@ function buildStageDots() {
   }));
 }
 
+// 撞いた瞬間の音。強さで高さと長さが変わる、短い打撃音。
+function playShotSound(power) {
+  const context = ensureAudioContext();
+  if (!context) return;
+  const now = context.currentTime;
+  const oscillator = context.createOscillator();
+  oscillator.type = "triangle";
+  oscillator.frequency.setValueAtTime(210 + power * 120, now);
+  oscillator.frequency.exponentialRampToValueAtTime(96, now + 0.09);
+  const gain = context.createGain();
+  gain.gain.setValueAtTime(0.03 + power * 0.05, now);
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.12);
+  oscillator.connect(gain).connect(context.destination);
+  oscillator.start(now);
+  oscillator.stop(now + 0.13);
+}
+
 // 区画を抜けた合図。達成音で盛り上げず、扉が開く程度の短い二音にする。
 function playClearSound() {
   const context = ensureAudioContext();
@@ -810,7 +936,7 @@ function updateHud() {
   physicsReadout.textContent =
     `重心 ${offsetMm.toFixed(1)} mm · 横ずれ ${(position.x * 100).toFixed(1)} cm · 速度 ${speed.toFixed(2)} m/s · 角速度 ${angularSpeed.toFixed(1)} rad/s`;
   zoneName.textContent = `${stageIndex + 1}　${stage.name}`;
-  attemptCount.textContent = `${attempt}個目`;
+  attemptCount.textContent = `${shotsTaken}打　${attempt}個目`;
 }
 
 function startGame() {
@@ -818,13 +944,14 @@ function startGame() {
   beginPlay();
   intro.classList.remove("is-visible");
   srStatus.textContent =
-    `${currentStage().name}。ドラッグした向きへ黄身が寄り、卵が転がります。`;
+    `${currentStage().name}。引いて放つと、黄身が殻を蹴って卵が転がります。`;
 }
 
 // 卵と入力と演出だけを再開状態へ戻す。区画そのものは呼び出し側が用意する。
 function beginPlay() {
   clearBreakEffect();
-  pressedAge = 0;
+  stuckShots = 0;
+  settledNoted = true;
   stallHint.classList.remove("is-visible");
   breakState.active = false;
   breakState.age = 0;
@@ -834,14 +961,17 @@ function beginPlay() {
   yolkState.position = { x: 0, y: -YOLK_REST_OFFSET, z: 0 };
   yolkState.velocity = { x: 0, y: 0, z: 0 };
   yolkState.acceleration = { x: 0, y: 0, z: 0 };
-  input.dx = 0;
-  input.dy = 0;
-  input.commandX = 0;
-  input.commandZ = 0;
-  input.commandStrength = 0;
-  input.releaseAge = Number.POSITIVE_INFINITY;
-  input.active = false;
-  input.pointerId = null;
+  aim.active = false;
+  aim.pointerId = null;
+  aim.power = 0;
+  aim.x = 0;
+  aim.z = 1;
+  shotCooldown = 0;
+  shotsTaken = 0;
+  stuckShots = 0;
+  progressMark = 0;
+  settledNoted = true;
+  stallHint.classList.remove("is-visible");
   applyYolkMassProperties();
   mode = "playing";
   playAge = 0;
@@ -889,7 +1019,7 @@ function clearStage() {
   result.classList.remove("is-shatter-result");
   result.classList.add("is-stage-clear");
   resultKicker.textContent =
-    `${stageIndex + 1} / ${STAGES.length}　${stage.subtitle}`;
+    `${stageIndex + 1} / ${STAGES.length}　${stage.subtitle}　${shotsTaken}打`;
   resultTitle.textContent = stage.clear.title;
   resultMessage.textContent = stage.clear.message;
   stageBrief.textContent = `次は「${next.name}」。${next.brief}`;
@@ -936,52 +1066,62 @@ function pointerPosition(event) {
   };
 }
 
-function beginDrag(event) {
+// 撞く向きは「引いた向きの反対」。ビリヤードのキューを引く感覚に合わせる。
+function updateAimFrom(point) {
+  const pullX = point.x - aim.originX;
+  const pullY = point.y - aim.originY;
+  const pull = Math.hypot(pullX, pullY);
+  if (pull < AIM_DEAD_ZONE) {
+    aim.power = 0;
+    return;
+  }
+  aim.x = -pullX / pull;
+  aim.z = pullY / pull;
+  aim.power = THREE.MathUtils.clamp(
+    (pull - AIM_DEAD_ZONE) / (AIM_FULL_PULL - AIM_DEAD_ZONE),
+    0,
+    1
+  );
+}
+
+function beginAim(event) {
   if (mode !== "playing") return;
   const point = pointerPosition(event);
-  input.active = true;
-  input.pointerId = event.pointerId;
-  input.startX = point.x;
-  input.startY = point.y;
-  input.dx = 0;
-  input.dy = 0;
-  input.commandStrength = 0;
-  input.releaseAge = Number.POSITIVE_INFINITY;
+  aim.active = true;
+  aim.pointerId = event.pointerId;
+  aim.originX = point.x;
+  aim.originY = point.y;
+  aim.power = 0;
   canvas.setPointerCapture(event.pointerId);
   canvas.classList.add("is-dragging");
 }
 
-function moveDrag(event) {
-  if (!input.active || event.pointerId !== input.pointerId) return;
-  const point = pointerPosition(event);
-  input.dx = THREE.MathUtils.clamp(point.x - input.startX, -118, 118);
-  input.dy = THREE.MathUtils.clamp(point.y - input.startY, -118, 118);
-  const magnitude = Math.hypot(input.dx, input.dy);
-  if (magnitude > 8) {
-    input.commandX = input.dx / magnitude;
-    input.commandZ = -input.dy / magnitude;
-    input.commandStrength = THREE.MathUtils.clamp(magnitude / 118, 0, 1);
-    input.releaseAge = 0;
-    firstInputMade = true;
-    dragHint.classList.add("is-hidden");
-  }
+function moveAim(event) {
+  if (!aim.active || event.pointerId !== aim.pointerId) return;
+  updateAimFrom(pointerPosition(event));
 }
 
-function endDrag(event) {
-  if (!input.active || event.pointerId !== input.pointerId) return;
-  input.active = false;
-  input.pointerId = null;
-  input.releaseAge = 0;
-  input.dx = 0;
-  input.dy = 0;
+function releaseAim(event) {
+  if (!aim.active || event.pointerId !== aim.pointerId) return;
+  if (event.type !== "pointercancel") updateAimFrom(pointerPosition(event));
+  const power = aim.power;
+  aim.active = false;
+  aim.pointerId = null;
+  aim.power = 0;
   canvas.classList.remove("is-dragging");
+  if (power > 0) fireShot(aim.x, aim.z, power);
 }
 
-function setKeyboard(code, pressed) {
-  if (code === "ArrowLeft" || code === "KeyA") input.keyboardX = pressed ? -1 : Math.max(0, input.keyboardX);
-  if (code === "ArrowRight" || code === "KeyD") input.keyboardX = pressed ? 1 : Math.min(0, input.keyboardX);
-  if (code === "ArrowUp" || code === "KeyW") input.keyboardZ = pressed ? 1 : Math.min(0, input.keyboardZ);
-  if (code === "ArrowDown" || code === "KeyS") input.keyboardZ = pressed ? -1 : Math.max(0, input.keyboardZ);
+function shootWithKey(code) {
+  const direction = {
+    ArrowUp: [0, 1], KeyW: [0, 1],
+    ArrowDown: [0, -1], KeyS: [0, -1],
+    ArrowLeft: [-1, 0], KeyA: [-1, 0],
+    ArrowRight: [1, 0], KeyD: [1, 0],
+  }[code];
+  if (!direction) return false;
+  fireShot(direction[0], direction[1], 0.75);
+  return true;
 }
 
 function resize() {
@@ -998,10 +1138,10 @@ retryButton.addEventListener("click", () => {
   else if (mode === "stage-clear") advanceStage();
   else restartStage();
 });
-canvas.addEventListener("pointerdown", beginDrag);
-canvas.addEventListener("pointermove", moveDrag);
-canvas.addEventListener("pointerup", endDrag);
-canvas.addEventListener("pointercancel", endDrag);
+canvas.addEventListener("pointerdown", beginAim);
+canvas.addEventListener("pointermove", moveAim);
+canvas.addEventListener("pointerup", releaseAim);
+canvas.addEventListener("pointercancel", releaseAim);
 window.addEventListener("keydown", (event) => {
   if ((event.code === "Space" || event.code === "Enter") && mode === "intro") {
     event.preventDefault();
@@ -1034,17 +1174,10 @@ window.addEventListener("keydown", (event) => {
     });
     return;
   }
-  if (
-    event.code.startsWith("Arrow") ||
-    ["KeyW", "KeyA", "KeyS", "KeyD"].includes(event.code)
-  ) {
+  if (mode === "playing" && shootWithKey(event.code)) {
     event.preventDefault();
-    setKeyboard(event.code, true);
-    firstInputMade = true;
-    dragHint.classList.add("is-hidden");
   }
 });
-window.addEventListener("keyup", (event) => setKeyboard(event.code, false));
 window.addEventListener("resize", resize);
 document.addEventListener("visibilitychange", () => {
   previousTime = performance.now();
@@ -1060,6 +1193,8 @@ window.__EGG_ESCAPE_TEST__ = {
     stageIndex,
     stageCount: STAGES.length,
     clearedCount,
+    shotsTaken,
+    aimPower: aim.power,
     position: { ...eggBody.translation() },
     rotation: { ...eggBody.rotation() },
     linearVelocity: { ...eggBody.linvel() },
