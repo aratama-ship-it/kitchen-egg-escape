@@ -423,8 +423,6 @@ function physicsStep() {
     return;
   }
 
-  updatePressedState();
-
   const stage = currentStage();
   const position = eggBody.translation();
   if (
@@ -484,7 +482,33 @@ function strongestObjectImpact(speed) {
   return strongest;
 }
 
+// フレームの中で例外が出ると、これまでは何も起きないまま固まって見えていた。
+// 原因が画面に出れば、遊んでいる側からも何が起きたか伝えられる。
 function frame(time) {
+  try {
+    frameBody(time);
+  } catch (error) {
+    reportFatal(error);
+  }
+}
+
+function reportFatal(error) {
+  renderer.setAnimationLoop(null);
+  mode = "error";
+  const message = error && error.message ? error.message : String(error);
+  console.error("[厨房脱出] フレーム処理で停止しました", error);
+  result.classList.remove("is-shatter-result", "is-stage-clear");
+  resultKicker.textContent = "STOPPED";
+  resultTitle.textContent = "動作が止まりました。";
+  resultMessage.textContent = message;
+  stageBrief.textContent = "この文言を伝えてもらえれば原因を追えます。";
+  retryButton.textContent = "読み込み直す";
+  retryButton.onclick = () => location.reload();
+  result.classList.add("is-visible");
+  srStatus.textContent = `動作が止まりました。${message}`;
+}
+
+function frameBody(time) {
   const elapsed = Math.min(0.05, Math.max(0, (time - previousTime) / 1000));
   previousTime = time;
 
