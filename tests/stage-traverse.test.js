@@ -30,22 +30,31 @@ import {
 } from "../src/stages.js";
 
 // おおよその巡航速度。先読み地点へ到達する時刻の見積もりに使う。
-const CRUISE_SPEED = 0.13;
+// 黄身のばねを強めた分だけ速くなっているので、実測に合わせてある。
+const CRUISE_SPEED = 0.155;
 
 // 少し先を見て、いちばん広い隙間の中央へ寄りながら進む操作モデル。
 // うまい人の再現ではなく「素直に狙えば通れる道があるか」を測るための基準。
 function gapSeeking(stage, { lookahead = 0.55, gain = 3.4 } = {}) {
-  let lastZ = 0;
-  let stalledFor = 0;
+  let checkedAt = 0;
+  let checkedZ = null;
+  let unstickUntil = 0;
   let committed = null;
+  // 殻の非対称でいつも同じ側へ流れるため、比例だけだと狙いが片側へずれたまま
+  // 釣り合ってしまう。人が「まだ寄っている」と足していくぶんを積分で表す。
+  let bias = 0;
 
   return (position, time) => {
-    // 角に噛んで止まったときは、指を左右に振って外しにかかる。
-    // 一定方向へ押し続けると抜けられないことが実測で分かっている。
-    if (position.z - lastZ < 0.004) stalledFor += 1;
-    else stalledFor = 0;
-    lastZ = position.z;
-    const unstick = stalledFor > 90 ? Math.sin(time * 2.2) : 0;
+    // 角に噛んで止まったときだけ、指を左右に振って外しにかかる。
+    // 判定は一定時間ごとの前進量で行う。1ステップの移動量は巡航中でも
+    // 1 mm ほどしかなく、そこを基準にすると常に「止まっている」ことになる。
+    if (checkedZ === null) { checkedZ = position.z; checkedAt = time; }
+    if (time - checkedAt >= 0.6) {
+      if (position.z - checkedZ < 0.02) unstickUntil = time + 1.6;
+      checkedZ = position.z;
+      checkedAt = time;
+    }
+    const unstick = time < unstickUntil ? Math.sin(time * 2.2) : 0;
 
     const aheadZ = Math.min(stage.length, position.z + lookahead);
     const arrival = time + lookahead / CRUISE_SPEED;
@@ -83,9 +92,11 @@ function gapSeeking(stage, { lookahead = 0.55, gain = 3.4 } = {}) {
     if (!stillOpen) committed = (chosen.from + chosen.to) / 2;
     const best = { width: chosen.width, center: committed };
 
+    const error = best.center - position.x;
+    bias = Math.max(-0.5, Math.min(0.5, bias * 0.998 + error * 0.012));
     const lateral = Math.max(
       -1,
-      Math.min(1, (best.center - position.x) * gain + unstick)
+      Math.min(1, error * gain + bias + unstick)
     );
     // 通れる隙間がないあいだは前へ出ず、カートが通り過ぎるのを待つ。
     let forward = best.width < EGG_CLEARANCE ? 0 : 1;

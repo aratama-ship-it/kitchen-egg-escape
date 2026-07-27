@@ -60,9 +60,14 @@ export function yolkTargetFor({
   return clampVector3(target, YOLK_MAX_OFFSET);
 }
 
+// 黄身が指の動きへ追いつく速さ。柔らかすぎると、ドラッグしてから
+// 卵が向きを変えるまでが遅く、操作が効いていないように感じる。
+const YOLK_SPRING = 184;
+const YOLK_DAMPING = 23;
+
 export function advanceYolk(state, target, dt) {
-  const spring = 92;
-  const damping = 16;
+  const spring = YOLK_SPRING;
+  const damping = YOLK_DAMPING;
   const acceleration = {
     x: (target.x - state.position.x) * spring - state.velocity.x * damping,
     y: (target.y - state.position.y) * spring - state.velocity.y * damping,

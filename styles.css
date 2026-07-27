@@ -200,6 +200,37 @@ button:focus-visible {
   opacity: 0;
 }
 
+/* 前へ押し続けても外れない角がある。詰みではなく、横へ逃がせば必ず抜ける。 */
+.stall-hint {
+  position: absolute;
+  z-index: 3;
+  left: 50%;
+  bottom: max(58px, calc(env(safe-area-inset-bottom) + 52px));
+  transform: translate(-50%, 6px);
+  padding: 0.42rem 0.8rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: #f0c94b;
+  background: rgba(9, 12, 11, 0.72);
+  border: 1px solid rgba(240, 201, 75, 0.5);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 220ms ease, transform 220ms ease;
+}
+
+.stall-hint.is-visible {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stall-hint {
+    transition: none;
+    transform: translate(-50%, 0);
+  }
+}
+
 .veil {
   position: absolute;
   z-index: 5;

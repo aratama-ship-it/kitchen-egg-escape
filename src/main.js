@@ -41,12 +41,21 @@ const physicsReadout = document.getElementById("physics-readout");
 const zoneName = document.getElementById("zone-name");
 const attemptCount = document.getElementById("attempt-count");
 const stageDots = document.getElementById("stage-dots");
+const stallHint = document.getElementById("stall-hint");
 const stageBrief = document.getElementById("stage-brief");
 const introBrief = document.getElementById("intro-brief");
 const dragHint = document.getElementById("drag-hint");
 const srStatus = document.getElementById("sr-status");
 
 const FIXED_STEP = 1 / 120;
+// 実物大の卵は、そのままの速さで見せると止まって見えるほど遅い。
+// 物理はそのままに、時間だけ速く進める。衝突の強さの関係は変わらない。
+const TIME_SCALE = 1.7;
+const MAX_STEPS_PER_FRAME = 40;
+// 中途半端なドラッグでは卵が転がり出せないため、指を置いた時点で
+// すでに転がる強さから始める。
+const MIN_POINTER_STRENGTH = 0.72;
+const KEYBOARD_STRENGTH = 0.9;
 const IDENTITY_ROTATION = { x: 0, y: 0, z: 0, w: 1 };
 const YOLK_INERTIA = spherePrincipalInertia(YOLK_MASS, YOLK_VISUAL_RADIUS);
 const NORMAL_EXPOSURE = 1.08;
@@ -65,6 +74,9 @@ let stageIndex = 0;
 let stageHandle = null;
 let stageTime = 0;
 let clearedCount = 0;
+// 障害物の角に噛むと、同じ向きへ押し続けるかぎり抜けられない。
+// 横へ逃がせば必ず外れるので、止まっていることだけを伝える。
+let pressedAge = 0;
 
 const currentStage = () => STAGES[stageIndex];
 
@@ -255,8 +267,13 @@ function applyYolkMassProperties() {
 function currentYolkTarget() {
   const keyboardMagnitude = Math.hypot(input.keyboardX, input.keyboardZ);
   const commandDecay = input.active ? 1 : Math.exp(-input.releaseAge * 2.2);
-  const effectiveCommandStrength = input.commandStrength * commandDecay;
-  const hasPointer = effectiveCommandStrength > 0.015;
+  // 指を置いた時点で転がる強さから始め、ドラッグ量で上へ伸ばす。
+  // 指を離したあとは、この全体が減衰して抜けていく。
+  const dragStrength = input.commandStrength > 0
+    ? MIN_POINTER_STRENGTH + (1 - MIN_POINTER_STRENGTH) * input.commandStrength
+    : 0;
+  const strengthNow = dragStrength * commandDecay;
+  const hasPointer = strengthNow > 0.015;
 
   let commandX = 0;
   let commandZ = 0;
@@ -264,11 +281,11 @@ function currentYolkTarget() {
   if (hasPointer) {
     commandX = input.commandX;
     commandZ = input.commandZ;
-    strength = effectiveCommandStrength;
+    strength = strengthNow;
   } else if (keyboardMagnitude > 0) {
     commandX = input.keyboardX / keyboardMagnitude;
     commandZ = input.keyboardZ / keyboardMagnitude;
-    strength = 0.82;
+    strength = KEYBOARD_STRENGTH;
   }
 
   return yolkTargetFor({
@@ -312,6 +329,8 @@ function physicsStep() {
     return;
   }
 
+  updatePressedState();
+
   const stage = currentStage();
   const position = eggBody.translation();
   if (
@@ -323,6 +342,22 @@ function physicsStep() {
   } else if (position.z >= stage.length) {
     clearStage();
   }
+}
+
+// 指を置いているのに卵がまったく動かないときだけ、横へ逃がすよう伝える。
+// 助けを出しすぎないよう、動き出した瞬間に消す。
+function updatePressedState() {
+  const velocity = eggBody.linvel();
+  const speed = Math.hypot(velocity.x, velocity.y, velocity.z);
+  const pushing = input.active || Math.hypot(input.keyboardX, input.keyboardZ) > 0;
+
+  if (pushing && speed < 0.012) pressedAge += FIXED_STEP;
+  else pressedAge = 0;
+
+  const shouldShow = pressedAge > 0.9;
+  if (shouldShow === stallHint.classList.contains("is-visible")) return;
+  stallHint.classList.toggle("is-visible", shouldShow);
+  if (shouldShow) srStatus.textContent = "何かに当たって止まっています。横へ逃がしてください。";
 }
 
 function strongestObjectImpact(speed) {
@@ -362,11 +397,15 @@ function frame(time) {
   previousTime = time;
 
   if (mode === "playing") {
-    accumulator += elapsed;
-    while (accumulator >= FIXED_STEP) {
+    accumulator += elapsed * TIME_SCALE;
+    let steps = 0;
+    while (accumulator >= FIXED_STEP && steps < MAX_STEPS_PER_FRAME) {
       physicsStep();
       accumulator -= FIXED_STEP;
+      steps += 1;
+      if (mode !== "playing") break;
     }
+    if (steps >= MAX_STEPS_PER_FRAME) accumulator = 0;
   }
   if (breakState.active) updateBreakEffect(elapsed);
 
@@ -419,6 +458,8 @@ function shatterEgg(impact) {
   input.pointerId = null;
   canvas.classList.remove("is-dragging");
   dragHint.classList.add("is-hidden");
+  pressedAge = 0;
+  stallHint.classList.remove("is-visible");
 
   const position = eggBody.translation();
   const linearVelocity = eggBody.linvel();
@@ -783,6 +824,8 @@ function startGame() {
 // 卵と入力と演出だけを再開状態へ戻す。区画そのものは呼び出し側が用意する。
 function beginPlay() {
   clearBreakEffect();
+  pressedAge = 0;
+  stallHint.classList.remove("is-visible");
   breakState.active = false;
   breakState.age = 0;
   breakState.resultShown = false;
