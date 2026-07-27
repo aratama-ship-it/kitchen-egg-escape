@@ -45,6 +45,7 @@ const zoneName = document.getElementById("zone-name");
 const attemptCount = document.getElementById("attempt-count");
 const stageDots = document.getElementById("stage-dots");
 const stallHint = document.getElementById("stall-hint");
+const homeButton = document.getElementById("home-button");
 const stageBrief = document.getElementById("stage-brief");
 const introBrief = document.getElementById("intro-brief");
 const dragHint = document.getElementById("drag-hint");
@@ -60,7 +61,7 @@ const SHOT_MIN_SPEED = 0.75;
 const SHOT_MAX_SPEED = 1.8;
 const YOLK_SPEED_CAP = 1.8;
 const SHOT_COOLDOWN = 0.28;
-// 引いた距離がこの画素数で最大の力になる。
+// 指を滑らせた距離がこの画素数で最大の力になる。
 const AIM_FULL_PULL = 132;
 const AIM_DEAD_ZONE = 10;
 const IDENTITY_ROTATION = { x: 0, y: 0, z: 0, w: 1 };
@@ -302,8 +303,8 @@ function applyYolkMassProperties() {
   );
 }
 
-// 狙いをつけているあいだ、黄身は撞く向きと反対側へ引かれて溜まる。
-// 放つと、その溜めが速度になって内壁へ向かう。
+// 狙いをつけているあいだ、黄身は撞く向きと反対側へ溜まる。
+// 放つと、その溜めが速度になって進みたい側の内壁へ走る。
 function currentYolkTarget() {
   if (!aim.active || aim.power <= 0) {
     return yolkTargetFor({ rotation: eggBody.rotation() });
@@ -550,7 +551,7 @@ function syncEggVisual() {
   yolkMaterial.emissiveIntensity = aim.active ? 0.5 + aim.power * 0.5 : 0.28;
 }
 
-// 引いた量がそのまま床の帯の長さになる。撞く前に飛距離の見当がつく。
+// 指を滑らせた量がそのまま床の帯の長さになる。撞く前に飛距離の見当がつく。
 function updateAimIndicator() {
   const showing = aim.active && aim.power > 0 && mode === "playing";
   aimMesh.visible = showing;
@@ -559,12 +560,12 @@ function updateAimIndicator() {
   if (aim.active) {
     dragHint.classList.remove("is-hidden");
     dragHint.firstElementChild.textContent = aim.power > 0
-      ? `引いている　力 ${Math.round(aim.power * 100)}%`
-      : "もう少し引く";
+      ? `狙っている　力 ${Math.round(aim.power * 100)}%`
+      : "もう少し動かす";
   } else if (shotsTaken > 0) {
     dragHint.classList.add("is-hidden");
   } else {
-    dragHint.firstElementChild.textContent = "引いて放つ。黄身が殻を蹴る";
+    dragHint.firstElementChild.textContent = "進みたい向きへ滑らせて放す";
   }
 
   if (!showing) return;
@@ -973,6 +974,33 @@ function updateHud() {
   attemptCount.textContent = `${shotsTaken}打　${attempt}個目`;
 }
 
+// プレイ中にいつでも抜けられるようにする。区画の途中でも、その区画の頭へ戻す。
+function returnToIntro() {
+  if (mode === "intro") return;
+  endAim(null, null, { fire: false });
+  mode = "intro";
+  accumulator = 0;
+  loadStage(stageIndex);
+  clearBreakEffect();
+  breakState.active = false;
+  breakState.resultShown = false;
+  shellMesh.visible = true;
+  yolkMesh.visible = true;
+  shotsTaken = 0;
+  stuckShots = 0;
+  settledNoted = true;
+  renderer.toneMappingExposure = NORMAL_EXPOSURE;
+  gameShell.classList.remove("is-broken");
+  stallHint.classList.remove("is-visible");
+  dragHint.classList.remove("is-hidden");
+  result.classList.remove("is-visible", "is-shatter-result", "is-stage-clear");
+  introBrief.textContent = currentStage().brief;
+  startButton.textContent = `${currentStage().name}へ`;
+  intro.classList.add("is-visible");
+  updateHud();
+  srStatus.textContent = "タイトルに戻りました。";
+}
+
 function startGame() {
   ensureAudioContext();
   beginPlay();
@@ -1100,19 +1128,21 @@ function pointerPosition(event) {
   };
 }
 
-// 撞く向きは「引いた向きの反対」。ビリヤードのキューを引く感覚に合わせる。
+// 指を動かした向きへ撞く。画面の右は世界の -x、画面の下は世界の -z にあたる
+// （カメラが卵の後ろから +z を向いているため）。ここを取り違えると、
+// 縦と横で挙動が食い違って「引いた向きに動かない」ことになる。
 function updateAimFrom(point) {
-  const pullX = point.x - aim.originX;
-  const pullY = point.y - aim.originY;
-  const pull = Math.hypot(pullX, pullY);
-  if (pull < AIM_DEAD_ZONE) {
+  const dragX = point.x - aim.originX;
+  const dragY = point.y - aim.originY;
+  const drag = Math.hypot(dragX, dragY);
+  if (drag < AIM_DEAD_ZONE) {
     aim.power = 0;
     return;
   }
-  aim.x = -pullX / pull;
-  aim.z = pullY / pull;
+  aim.x = -dragX / drag;
+  aim.z = -dragY / drag;
   aim.power = THREE.MathUtils.clamp(
-    (pull - AIM_DEAD_ZONE) / (AIM_FULL_PULL - AIM_DEAD_ZONE),
+    (drag - AIM_DEAD_ZONE) / (AIM_FULL_PULL - AIM_DEAD_ZONE),
     0,
     1
   );
@@ -1235,6 +1265,7 @@ function resize() {
 }
 
 startButton.addEventListener("click", startGame);
+homeButton.addEventListener("click", returnToIntro);
 retryButton.addEventListener("click", () => {
   if (mode === "won") restartCourse();
   else if (mode === "stage-clear") advanceStage();
@@ -1258,6 +1289,11 @@ window.addEventListener("keydown", (event) => {
     event.preventDefault();
     if (mode === "won") restartCourse();
     else advanceStage();
+    return;
+  }
+  if (event.code === "Escape" && mode !== "intro") {
+    event.preventDefault();
+    returnToIntro();
     return;
   }
   if (event.code === "KeyR" && mode !== "intro") {

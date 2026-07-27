@@ -21,7 +21,10 @@
     <div class="hud" aria-live="polite">
       <div class="hud-copy">
         <span id="zone-name">1　仕込み台の下</span>
-        <span id="attempt-count">1個目</span>
+        <span class="hud-right">
+          <span id="attempt-count">1個目</span>
+          <button id="home-button" type="button">タイトル</button>
+        </span>
       </div>
       <div class="progress-track" aria-label="この区画の進行度">
         <span id="progress-fill"></span>
@@ -34,7 +37,7 @@
     </div>
 
     <div id="drag-hint" class="drag-hint" aria-hidden="true">
-      <span>引いて放つ。黄身が殻を蹴る</span>
+      <span>進みたい向きへ滑らせて放す</span>
     </div>
 
     <div id="stall-hint" class="stall-hint" aria-hidden="true">
@@ -45,9 +48,9 @@
       <div class="intro-copy">
         <p class="eyebrow">5区画　／　厨房の端から裏口まで</p>
         <h1 id="intro-title">厨房脱出</h1>
-        <p>卵を押すことはできません。引いて放つと、中の黄身が殻の内壁を蹴り、その反動だけで卵がゴロンと転がります。厨房の何かへ強く当たれば、割れます。</p>
+        <p>卵を押すことはできません。進みたい向きへ指を滑らせて放すと、中の黄身が殻の内壁を蹴り、その反動だけで卵がゴロンと転がります。厨房の何かへ強く当たれば、割れます。</p>
         <p id="intro-brief" class="intro-brief"></p>
-        <p class="controls-note">引いて、放す　／　PC：矢印キーでも撞ける</p>
+        <p class="controls-note">進みたい向きへ滑らせて放す　／　PC：矢印キーでも撞ける</p>
         <button id="start-button" type="button" disabled>物理計算を準備中</button>
       </div>
     </section>

@@ -125,10 +125,34 @@ button:focus-visible {
 .hud-copy {
   display: flex;
   justify-content: space-between;
+  align-items: center;
   gap: 1rem;
   font-size: 0.8rem;
   font-weight: 700;
   letter-spacing: 0.1em;
+}
+
+.hud-right {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+}
+
+/* HUD全体は操作を通すが、この一つだけは押せるようにする */
+#home-button {
+  padding: 0.3rem 0.62rem;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: rgba(242, 241, 233, 0.86);
+  background: rgba(9, 12, 11, 0.5);
+  border: 1px solid rgba(242, 241, 233, 0.32);
+  pointer-events: auto;
+}
+
+#home-button:hover {
+  background: rgba(242, 241, 233, 0.14);
+  color: #f2f1e9;
 }
 
 .hud-detail {
