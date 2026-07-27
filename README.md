@@ -1,5 +1,7 @@
 # 厨房脱出：卵が5区画を抜けるまで
 
+**公開URL: https://aratama-ship-it.github.io/kitchen-egg-escape/** （スマホで開ける）
+
 床すれすれの後方視点で、黄身を偏らせて卵を転がし、厨房の裏口を目指すブラウザゲーム。
 1区画を30〜45秒で抜け、5区画で終わる。割れたら、その区画の最初からやり直す。
 
@@ -64,6 +66,16 @@ npm run dev
 
 通常の床接触や、ごく弱く壁をこする動きでは割れない。現在の判定値はゲーム用の初期調整で、
 実物の殻強度を測定した値ではない。
+
+## 公開
+
+`main` へpushすると GitHub Actions がテストとビルドを走らせ、GitHub Pages へ配信する
+（`.github/workflows/deploy.yml`）。テストが落ちると公開されない。
+
+このリポジトリの作業ツリーは iCloud Drive 上にあるが、`.git` は iCloud の同期競合を
+避けるため `~/git-repos/kitchen-egg-escape` へ退避してある（`--separate-git-dir`）。
+**このMac以外からは git 操作ができない。** iCloudが作る `〇〇 2.js` のような競合コピーは
+`.gitignore` で公開対象から外している（消してはいない）。
 
 ## テスト
 
