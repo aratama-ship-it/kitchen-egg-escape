@@ -530,6 +530,19 @@ function syncEggVisual() {
 function updateAimIndicator() {
   const showing = aim.active && aim.power > 0 && mode === "playing";
   aimMesh.visible = showing;
+
+  // 床の帯を見落としても、指が効いていることだけは分かるようにする。
+  if (aim.active) {
+    dragHint.classList.remove("is-hidden");
+    dragHint.firstElementChild.textContent = aim.power > 0
+      ? `引いている　力 ${Math.round(aim.power * 100)}%`
+      : "もう少し引く";
+  } else if (shotsTaken > 0) {
+    dragHint.classList.add("is-hidden");
+  } else {
+    dragHint.firstElementChild.textContent = "引いて放つ。黄身が殻を蹴る";
+  }
+
   if (!showing) return;
 
   const position = eggBody.translation();
@@ -561,10 +574,7 @@ function updateCamera(dt) {
 function shatterEgg(impact) {
   if (mode !== "playing") return;
   mode = "breaking";
-  aim.active = false;
-  aim.pointerId = null;
-  aim.power = 0;
-  canvas.classList.remove("is-dragging");
+  endAim(null, null, { fire: false });
   dragHint.classList.add("is-hidden");
   stuckShots = 0;
   settledNoted = true;
@@ -1084,32 +1094,100 @@ function updateAimFrom(point) {
   );
 }
 
-function beginAim(event) {
+// 狙いは座標だけで組み立て、ポインタ／タッチのどちらの経路からでも同じ処理へ入る。
+// iOS Safari はポインタイベントの取りこぼしが起きやすいため、
+// タッチのある端末では touch 系を正として扱う。
+function startAim(x, y) {
   if (mode !== "playing") return;
-  const point = pointerPosition(event);
   aim.active = true;
-  aim.pointerId = event.pointerId;
-  aim.originX = point.x;
-  aim.originY = point.y;
+  aim.originX = x;
+  aim.originY = y;
   aim.power = 0;
-  canvas.setPointerCapture(event.pointerId);
   canvas.classList.add("is-dragging");
 }
 
-function moveAim(event) {
-  if (!aim.active || event.pointerId !== aim.pointerId) return;
-  updateAimFrom(pointerPosition(event));
+function dragAim(x, y) {
+  if (!aim.active) return;
+  updateAimFrom({ x, y });
 }
 
-function releaseAim(event) {
-  if (!aim.active || event.pointerId !== aim.pointerId) return;
-  if (event.type !== "pointercancel") updateAimFrom(pointerPosition(event));
+function endAim(x, y, { fire = true } = {}) {
+  if (!aim.active) return;
+  if (fire && x !== null) updateAimFrom({ x, y });
   const power = aim.power;
   aim.active = false;
   aim.pointerId = null;
   aim.power = 0;
   canvas.classList.remove("is-dragging");
-  if (power > 0) fireShot(aim.x, aim.z, power);
+  if (fire && power > 0) fireShot(aim.x, aim.z, power);
+}
+
+// 指の操作は touch 系で、マウスとペンは pointer 系で受ける。
+// 端末で切り替えるとタッチ対応のノートPCでマウスが効かなくなるため、
+// 同じ端末でも「その入力が指かどうか」で振り分ける。
+const isTouchPointer = (event) => event.pointerType === "touch";
+
+function touchPoint(touch) {
+  const rect = canvas.getBoundingClientRect();
+  return { x: touch.clientX - rect.left, y: touch.clientY - rect.top };
+}
+
+function onTouchStart(event) {
+  if (mode !== "playing") return;
+  event.preventDefault();
+  const point = touchPoint(event.changedTouches[0]);
+  aim.pointerId = event.changedTouches[0].identifier;
+  startAim(point.x, point.y);
+}
+
+function findTouch(event) {
+  for (const touch of event.changedTouches) {
+    if (touch.identifier === aim.pointerId) return touch;
+  }
+  return null;
+}
+
+function onTouchMove(event) {
+  if (!aim.active) return;
+  event.preventDefault();
+  const touch = findTouch(event);
+  if (!touch) return;
+  const point = touchPoint(touch);
+  dragAim(point.x, point.y);
+}
+
+function onTouchEnd(event) {
+  if (!aim.active) return;
+  event.preventDefault();
+  const touch = findTouch(event);
+  if (!touch) return;
+  const point = touchPoint(touch);
+  endAim(point.x, point.y, { fire: event.type === "touchend" });
+}
+
+function beginAim(event) {
+  if (mode !== "playing" || isTouchPointer(event)) return;
+  const point = pointerPosition(event);
+  aim.pointerId = event.pointerId;
+  startAim(point.x, point.y);
+  // 取得できない端末があるので、失敗しても操作は続けられるようにする。
+  try {
+    canvas.setPointerCapture(event.pointerId);
+  } catch {
+    /* 取得できなくても、以降のイベントは canvas に届く */
+  }
+}
+
+function moveAim(event) {
+  if (isTouchPointer(event) || !aim.active || event.pointerId !== aim.pointerId) return;
+  const point = pointerPosition(event);
+  dragAim(point.x, point.y);
+}
+
+function releaseAim(event) {
+  if (isTouchPointer(event) || !aim.active || event.pointerId !== aim.pointerId) return;
+  const point = pointerPosition(event);
+  endAim(point.x, point.y, { fire: event.type !== "pointercancel" });
 }
 
 function shootWithKey(code) {
@@ -1142,6 +1220,10 @@ canvas.addEventListener("pointerdown", beginAim);
 canvas.addEventListener("pointermove", moveAim);
 canvas.addEventListener("pointerup", releaseAim);
 canvas.addEventListener("pointercancel", releaseAim);
+canvas.addEventListener("touchstart", onTouchStart, { passive: false });
+canvas.addEventListener("touchmove", onTouchMove, { passive: false });
+canvas.addEventListener("touchend", onTouchEnd, { passive: false });
+canvas.addEventListener("touchcancel", onTouchEnd, { passive: false });
 window.addEventListener("keydown", (event) => {
   if ((event.code === "Space" || event.code === "Enter") && mode === "intro") {
     event.preventDefault();
