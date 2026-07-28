@@ -38,7 +38,7 @@ export const STAGES = [
     id: "prep-counter",
     name: "仕込み台の下",
     subtitle: "PREP COUNTER",
-    brief: "引いて放つと、中の黄身が殻を蹴る。まず、まっすぐ転がしてみる。",
+    brief: "前へ振り出すと、中の黄身が殻を蹴る。まず、まっすぐ転がしてみる。",
     length: 4,
     halfWidth: DEFAULT_HALF_WIDTH,
     bank: 0,

@@ -65,6 +65,10 @@ const SHOT_COOLDOWN = 0.28;
 const AIM_FULL_PULL = 132;
 const AIM_DEAD_ZONE = 10;
 const IDENTITY_ROTATION = { x: 0, y: 0, z: 0, w: 1 };
+// 画角は二つ。止まっているあいだは文字組みと釣り合う高さ、
+// 打っているあいだは卵を下へ落として、その先の床を広く見せる。
+const TITLE_FRAMING = { height: 0.075, back: 0.34, lookAhead: 0.24 };
+const PLAY_FRAMING = { height: 0.095, back: 0.34, lookAhead: 1.05 };
 const YOLK_INERTIA = spherePrincipalInertia(YOLK_MASS, YOLK_VISUAL_RADIUS);
 const NORMAL_EXPOSURE = 1.08;
 const SHATTER_RESULT_DELAY = 1.45;
@@ -88,6 +92,7 @@ let shotsTaken = 0;
 let stuckShots = 0;
 let progressMark = 0;
 let settledNoted = true;
+let cameraFraming = 0;
 
 // 狙い。撞く向き（進みたい向き）と、引いた量から決まる力。
 const aim = {
@@ -589,14 +594,36 @@ function updateCamera(dt) {
     ? Math.max(0, 1 - breakState.age / 0.16)
     : 0;
   const shake = REDUCE_MOTION ? 0 : shakeLife * 0.0055;
+
+  // 打っているあいだは卵を画面の下寄りに置き、その先の床を広く見せる。
+  // 止まっているあいだは文字組みと釣り合う高さへ戻す。
+  const wantsPlayFraming = mode === "playing" || mode === "breaking";
+  const framingStep = 1 - Math.exp(-3.4 * Math.max(dt, 1 / 120));
+  cameraFraming += ((wantsPlayFraming ? 1 : 0) - cameraFraming) * framingStep;
+  const height = THREE.MathUtils.lerp(
+    TITLE_FRAMING.height,
+    PLAY_FRAMING.height,
+    cameraFraming
+  );
+  const back = THREE.MathUtils.lerp(
+    TITLE_FRAMING.back,
+    PLAY_FRAMING.back,
+    cameraFraming
+  );
+  const lookAhead = THREE.MathUtils.lerp(
+    TITLE_FRAMING.lookAhead,
+    PLAY_FRAMING.lookAhead,
+    cameraFraming
+  );
+
   const targetPosition = new THREE.Vector3(
     position.x * 0.82 + Math.sin(breakState.age * 128) * shake,
-    Math.max(0.105, position.y + 0.075),
-    position.z - 0.34 + Math.cos(breakState.age * 91) * shake * 0.45
+    Math.max(0.105, position.y + height),
+    position.z - back + Math.cos(breakState.age * 91) * shake * 0.45
   );
   const smoothing = 1 - Math.exp(-7.5 * Math.max(dt, 1 / 120));
   camera.position.lerp(targetPosition, smoothing);
-  camera.lookAt(position.x, Math.max(0.035, position.y), position.z + 0.24);
+  camera.lookAt(position.x, Math.max(0.035, position.y), position.z + lookAhead);
 }
 
 function shatterEgg(impact) {
