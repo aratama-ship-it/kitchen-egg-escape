@@ -98,6 +98,7 @@ const aim = {
   x: 0,
   z: 1,
   power: 0,
+  blocked: false,
 };
 
 const currentStage = () => STAGES[stageIndex];
@@ -559,13 +560,15 @@ function updateAimIndicator() {
   // 床の帯を見落としても、指が効いていることだけは分かるようにする。
   if (aim.active) {
     dragHint.classList.remove("is-hidden");
-    dragHint.firstElementChild.textContent = aim.power > 0
-      ? `狙っている　力 ${Math.round(aim.power * 100)}%`
-      : "もう少し動かす";
+    dragHint.firstElementChild.textContent = aim.blocked
+      ? "前へ振り出す"
+      : aim.power > 0
+        ? `狙っている　力 ${Math.round(aim.power * 100)}%`
+        : "もう少し動かす";
   } else if (shotsTaken > 0) {
     dragHint.classList.add("is-hidden");
   } else {
-    dragHint.firstElementChild.textContent = "進みたい向きへ滑らせて放す";
+    dragHint.firstElementChild.textContent = "前へ振り出して放す";
   }
 
   if (!showing) return;
@@ -1128,19 +1131,31 @@ function pointerPosition(event) {
   };
 }
 
-// 指を動かした向きへ撞く。画面の右は世界の -x、画面の下は世界の -z にあたる
-// （カメラが卵の後ろから +z を向いているため）。ここを取り違えると、
-// 縦と横で挙動が食い違って「引いた向きに動かない」ことになる。
+// ゴルフの一打と同じで、前へ振り出した分だけ進む。手前へ引いても卵は戻らない。
+// 画面の右は世界の -x、画面の上は世界の +z（カメラが卵の後ろから +z を向く）。
 function updateAimFrom(point) {
   const dragX = point.x - aim.originX;
   const dragY = point.y - aim.originY;
   const drag = Math.hypot(dragX, dragY);
   if (drag < AIM_DEAD_ZONE) {
     aim.power = 0;
+    aim.blocked = false;
     return;
   }
-  aim.x = -dragX / drag;
-  aim.z = -dragY / drag;
+
+  // 前へ向かう成分だけを取り出す。手前へのスワイプは横向きの一打になり、
+  // 真後ろへのスワイプは一打にならない。
+  const forward = Math.max(0, -dragY / drag);
+  const lateral = -dragX / drag;
+  const length = Math.hypot(lateral, forward);
+  if (length < 0.2) {
+    aim.power = 0;
+    aim.blocked = true;
+    return;
+  }
+  aim.blocked = false;
+  aim.x = lateral / length;
+  aim.z = forward / length;
   aim.power = THREE.MathUtils.clamp(
     (drag - AIM_DEAD_ZONE) / (AIM_FULL_PULL - AIM_DEAD_ZONE),
     0,
@@ -1172,6 +1187,7 @@ function endAim(x, y, { fire = true } = {}) {
   aim.active = false;
   aim.pointerId = null;
   aim.power = 0;
+  aim.blocked = false;
   canvas.classList.remove("is-dragging");
   if (fire && power > 0) fireShot(aim.x, aim.z, power);
 }
@@ -1247,9 +1263,8 @@ function releaseAim(event) {
 function shootWithKey(code) {
   const direction = {
     ArrowUp: [0, 1], KeyW: [0, 1],
-    ArrowDown: [0, -1], KeyS: [0, -1],
-    ArrowLeft: [-1, 0], KeyA: [-1, 0],
-    ArrowRight: [1, 0], KeyD: [1, 0],
+    ArrowLeft: [-1, 0.35], KeyA: [-1, 0.35],
+    ArrowRight: [1, 0.35], KeyD: [1, 0.35],
   }[code];
   if (!direction) return false;
   fireShot(direction[0], direction[1], 0.75);
