@@ -60,6 +60,12 @@ export function yolkTargetFor({
   return clampVector3(target, YOLK_MAX_OFFSET);
 }
 
+// 撞く強さ（黄身へ与える速度）。3倍の世界の運動に合わせて弱めてある。
+// 上限を超えると重心が動きすぎて剛体計算が荒れる。
+export const SHOT_MIN_SPEED = 0.54;
+export const SHOT_MAX_SPEED = 1.3;
+export const YOLK_SPEED_CAP = 1.3;
+
 // 黄身が指の動きへ追いつく速さ。柔らかすぎると、ドラッグしてから
 // 卵が向きを変えるまでが遅く、操作が効いていないように感じる。
 const YOLK_SPRING = 184;

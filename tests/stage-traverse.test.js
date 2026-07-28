@@ -9,8 +9,11 @@ import {
   createEggColliderPoints,
 } from "../src/egg-shape.js";
 import {
+  SHOT_MAX_SPEED,
+  SHOT_MIN_SPEED,
   YOLK_MASS,
   YOLK_REST_OFFSET,
+  YOLK_SPEED_CAP,
   YOLK_VISUAL_RADIUS,
   advanceYolk,
   rotateByInverse,
@@ -22,6 +25,7 @@ import {
   EGG_CLEARANCE,
   STAGES,
   SURFACE_FRICTION,
+  WORLD_GRAVITY,
   blockedSpansAt,
   draftForceAt,
   moverCollider,
@@ -31,10 +35,6 @@ import {
   surfaceAt,
 } from "../src/stages.js";
 
-// 撞く強さの範囲。ゲーム本体と同じ値。
-const SHOT_MIN_SPEED = 0.75;
-const SHOT_MAX_SPEED = 1.8;
-const YOLK_SPEED_CAP = 1.8;
 
 // 卵が止まるたびに、少し先を見ていちばん広い隙間へ狙いを定め、撞く。
 // うまい人ではなく「素直に隙間を狙うだけの人」を模した基準。
@@ -117,7 +117,7 @@ function rollThroughStage(stage, {
   startZ = null,
   withDraft = true,
 } = {}) {
-  const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
+  const world = new RAPIER.World({ x: 0, y: -WORLD_GRAVITY, z: 0 });
   world.timestep = FIXED_STEP;
   const events = new RAPIER.EventQueue(true);
   const kinds = new Map();

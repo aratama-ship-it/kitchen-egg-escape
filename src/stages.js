@@ -10,6 +10,12 @@ export const PASSABLE_HEIGHT = 0.02;
 
 export const DEFAULT_HALF_WIDTH = 1.15;
 
+// 実物大の卵は、転がると毎秒3回以上まわってしまい、一回転ずつ見えない。
+// 形はそのままに重力を1/3にすると、3倍の大きさの世界と同じ運動になる
+// （見え方は変わらず、動きだけ大きなものらしくゆっくりになる）。
+export const WORLD_SCALE = 3;
+export const WORLD_GRAVITY = 9.81 / WORLD_SCALE;
+
 export const SURFACE_FRICTION = {
   dry: 0.66,
   wet: 0.13,
@@ -186,7 +192,7 @@ export const STAGES = [
     length: 4.6,
     halfWidth: DEFAULT_HALF_WIDTH,
     bank: 0.06,
-    draft: { fromZ: 1, toZ: 4, force: -0.055 },
+    draft: { fromZ: 1, toZ: 4, force: -0.018 },
     atmosphere: { fog: 0x6d5a4a, key: 0xffd3a0, ambient: 0xe8d3bd },
     floor: [
       { toZ: 1.4, surface: "dry" },

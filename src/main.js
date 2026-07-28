@@ -10,6 +10,9 @@ import {
   YOLK_MASS,
   YOLK_REST_OFFSET,
   YOLK_VISUAL_RADIUS,
+  SHOT_MAX_SPEED,
+  SHOT_MIN_SPEED,
+  YOLK_SPEED_CAP,
   advanceYolk,
   rotateByInverse,
   spherePrincipalInertia,
@@ -22,6 +25,7 @@ import {
 import {
   STAGES,
   SURFACE_FRICTION,
+  WORLD_GRAVITY,
   draftForceAt,
   stageStartPosition,
   stageStartRotation,
@@ -54,12 +58,8 @@ const srStatus = document.getElementById("sr-status");
 const FIXED_STEP = 1 / 120;
 // 実物大の卵は、そのままの速さで見せると止まって見えるほど遅い。
 // 物理はそのままに、時間だけ速く進める。衝突の強さの関係は変わらない。
-const TIME_SCALE = 1.7;
+const TIME_SCALE = 1.2;
 const MAX_STEPS_PER_FRAME = 40;
-// 撞く強さ。黄身へ与える速度で、1.8 m/sを超えると重心が動きすぎて計算が荒れる。
-const SHOT_MIN_SPEED = 0.75;
-const SHOT_MAX_SPEED = 1.8;
-const YOLK_SPEED_CAP = 1.8;
 const SHOT_COOLDOWN = 0.28;
 // 指を滑らせた距離がこの画素数で最大の力になる。
 const AIM_FULL_PULL = 132;
@@ -154,7 +154,7 @@ keyLight.shadow.camera.near = 0.1;
 keyLight.shadow.camera.far = 9;
 scene.add(keyLight);
 
-const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
+const world = new RAPIER.World({ x: 0, y: -WORLD_GRAVITY, z: 0 });
 world.timestep = FIXED_STEP;
 const eventQueue = new RAPIER.EventQueue(true);
 
