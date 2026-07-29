@@ -1,4 +1,5 @@
 import { EGG_MAX_RADIUS } from "./egg-shape.js";
+import { eggProfile } from "./egg-types.js";
 
 // 卵の最大幅は47 mm。重心移動だけで操作するため直進誤差が大きく、
 // 通り抜けを要求する隙間は実寸の倍以上を最低値とする。
@@ -15,6 +16,33 @@ export const DEFAULT_HALF_WIDTH = 1.15;
 // （見え方は変わらず、動きだけ大きなものらしくゆっくりになる）。
 export const WORLD_SCALE = 3;
 export const WORLD_GRAVITY = 9.81 / WORLD_SCALE;
+
+// 猫はときどき現れて、卵を不規則な向きへ弾く。理不尽だが、逃げ場はある。
+// shelter（隙間）の中にいるあいだは前足が届かない。
+export const CAT_WARNING_SECONDS = 1.1;
+
+export function shelterAt(stage, x, z) {
+  for (const shelter of stage.shelters ?? []) {
+    if (
+      z >= shelter.fromZ && z <= shelter.toZ
+      && x >= shelter.fromX && x <= shelter.toX
+    ) return shelter;
+  }
+  return null;
+}
+
+export function isSheltered(stage, x, z) {
+  return shelterAt(stage, x, z) !== null;
+}
+
+// 猫が次に手を出す時刻。区画ごとに間隔を決め、そこから決まった順で来る。
+export function catStrikeTimes(stage, until) {
+  const cat = stage.cat;
+  if (!cat) return [];
+  const times = [];
+  for (let t = cat.firstAt; t <= until; t += cat.every) times.push(t);
+  return times;
+}
 
 export const SURFACE_FRICTION = {
   dry: 0.66,
@@ -36,6 +64,7 @@ const counterLegs = (positions, halfWidth = DEFAULT_HALF_WIDTH) =>
 export const STAGES = [
   {
     id: "prep-counter",
+    egg: "ostrich",
     name: "仕込み台の下",
     subtitle: "PREP COUNTER",
     brief: "前へ振り出すと、中の黄身が殻を蹴る。まず、まっすぐ転がしてみる。",
@@ -50,7 +79,7 @@ export const STAGES = [
         shape: "cylinder",
         kind: "pot",
         look: "steel",
-        x: 0.32,
+        x: 0.52,
         z: 1.8,
         radius: 0.15,
         height: 0.3,
@@ -59,7 +88,7 @@ export const STAGES = [
         shape: "box",
         kind: "crate",
         look: "wood",
-        x: -0.44,
+        x: -0.72,
         z: 3,
         width: 0.5,
         depth: 0.3,
@@ -74,6 +103,7 @@ export const STAGES = [
   },
   {
     id: "wash-station",
+    egg: "goose",
     name: "洗い場",
     subtitle: "WASH STATION",
     brief: "床が濡れている。撞いても転がらず、まっすぐ滑るだけ。曲がってはくれない。",
@@ -137,6 +167,12 @@ export const STAGES = [
       },
     ],
     movers: [],
+    // 洗い場ではじめて猫が出る。流し台の脚の奥が逃げ場になる。
+    cat: { firstAt: 9, every: 11, strength: 0.05 },
+    shelters: [
+      { fromX: -1.15, toX: -0.72, fromZ: 1.6, toZ: 2.4, label: "流し台の下" },
+      { fromX: 0.72, toX: 1.15, fromZ: 2.7, toZ: 3.5, label: "洗い桶の陰" },
+    ],
     clear: {
       title: "濡れた床を渡った。",
       message: "床が、また卵を掴みはじめる。",
@@ -144,6 +180,7 @@ export const STAGES = [
   },
   {
     id: "service-aisle",
+    egg: "duck",
     name: "配膳通路",
     subtitle: "SERVICE AISLE",
     brief: "配膳カートが通路を横切る。撞いたら止まれない。渡るなら通り過ぎた直後。",
@@ -179,6 +216,11 @@ export const STAGES = [
         phase: -Math.PI / 2,
       },
     ],
+    cat: { firstAt: 7, every: 9, strength: 0.055 },
+    shelters: [
+      { fromX: -1.15, toX: -0.78, fromZ: 2.2, toZ: 3.1, label: "台車の陰" },
+      { fromX: 0.78, toX: 1.15, fromZ: 2.2, toZ: 3.1, label: "壁ぎわ" },
+    ],
     clear: {
       title: "通した。",
       message: "カートは、こちらを見ていない。",
@@ -186,6 +228,7 @@ export const STAGES = [
   },
   {
     id: "the-range",
+    egg: "chicken",
     name: "火口の前",
     subtitle: "THE RANGE",
     brief: "換気扇が横から吸っている。放っておくと、火口の脚の側へ持っていかれる。",
@@ -230,6 +273,10 @@ export const STAGES = [
       },
     ],
     movers: [],
+    cat: { firstAt: 6, every: 8, strength: 0.05 },
+    shelters: [
+      { fromX: 0.7, toX: 1.15, fromZ: 1.8, toZ: 2.8, label: "冷蔵庫の隙間" },
+    ],
     clear: {
       title: "火口の前を過ぎた。",
       message: "傾いた床が、まだ体に残っている。",
@@ -237,6 +284,7 @@ export const STAGES = [
   },
   {
     id: "back-door",
+    egg: "quail",
     name: "裏口",
     subtitle: "BACK DOOR",
     brief: "扉の下は、通路の八分の一しか開いていない。最後は、速さより正確さ。",
@@ -273,6 +321,11 @@ export const STAGES = [
       },
     ],
     movers: [],
+    cat: { firstAt: 5, every: 7, strength: 0.04 },
+    shelters: [
+      { fromX: -1.15, toX: -0.75, fromZ: 1.0, toZ: 1.9, label: "扉のくぼみ" },
+      { fromX: 0.75, toX: 1.15, fromZ: 1.0, toZ: 1.9, label: "壁のくぼみ" },
+    ],
     clear: {
       title: "外。",
       message: "厨房の音が、うしろで続いている。",
@@ -325,7 +378,8 @@ export const START_Z = 0.3;
 // 卵は横倒しで置く。立てて置くと倒れたあと長軸が進行方向を向き、
 // 重心を偏らせても転がらずその場で止まってしまう。
 export function stageStartPosition(stage) {
-  return toWorld(stage, 0, EGG_MAX_RADIUS + 0.001, START_Z);
+  const egg = eggProfile(stage.egg);
+  return toWorld(stage, 0, egg.maxRadius + 0.001, START_Z);
 }
 
 export function stageStartRotation(stage) {
@@ -483,8 +537,9 @@ export function validateStage(stage) {
   const problems = [];
 
   if (!(stage.length > 0)) problems.push(`${stage.id}: 長さが正の値ではない`);
-  if (!(stage.halfWidth > EGG_CLEARANCE)) {
-    problems.push(`${stage.id}: 通路が狭すぎる`);
+  const egg = eggProfile(stage.egg);
+  if (!(stage.halfWidth > egg.clearance)) {
+    problems.push(`${stage.id}: ${egg.name}には通路が狭すぎる`);
   }
 
   const spans = floorSpans(stage);
@@ -512,11 +567,32 @@ export function validateStage(stage) {
     }
   });
 
+  for (const shelter of stage.shelters ?? []) {
+    if (shelter.fromX >= shelter.toX || shelter.fromZ >= shelter.toZ) {
+      problems.push(`${stage.id}: 逃げ場の範囲が逆さま`);
+    }
+    if (Math.abs(shelter.fromX) > stage.halfWidth + 0.01
+      || Math.abs(shelter.toX) > stage.halfWidth + 0.01) {
+      problems.push(`${stage.id}: 逃げ場が床の外にある`);
+    }
+    if (shelter.toZ > stage.length || shelter.fromZ < 0) {
+      problems.push(`${stage.id}: 逃げ場が区画の外にある`);
+    }
+    const width = Math.min(shelter.toX - shelter.fromX, shelter.toZ - shelter.fromZ);
+    if (width < egg.width * 1.5) {
+      problems.push(`${stage.id}: 逃げ場が${egg.name}には狭い`);
+    }
+  }
+  if (stage.cat && (stage.shelters ?? []).length === 0) {
+    problems.push(`${stage.id}: 猫がいるのに逃げ場がない`);
+  }
+
   for (let z = 0; z <= stage.length + 0.001; z += 0.05) {
     const gap = bestGapAt(stage, Math.min(z, stage.length));
-    if (gap < EGG_CLEARANCE) {
+    if (gap < egg.clearance) {
       problems.push(
-        `${stage.id}: z=${z.toFixed(2)} で通り抜けられない（最大の隙間 ${gap.toFixed(3)} m）`
+        `${stage.id}: ${egg.name}が z=${z.toFixed(2)} を通れない`
+        + `（隙間 ${gap.toFixed(3)} m、必要 ${egg.clearance.toFixed(3)} m）`
       );
       break;
     }

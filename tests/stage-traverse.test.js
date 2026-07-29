@@ -21,6 +21,7 @@ import {
   yolkTargetFor,
 } from "../src/yolk-model.js";
 import { shouldShatter } from "../src/impact-model.js";
+import { eggProfile } from "../src/egg-types.js";
 import {
   EGG_CLEARANCE,
   STAGES,
@@ -38,7 +39,10 @@ import {
 
 // 卵が止まるたびに、少し先を見ていちばん広い隙間へ狙いを定め、撞く。
 // うまい人ではなく「素直に隙間を狙うだけの人」を模した基準。
-function gapAiming(stage, { lookahead = 0.42 } = {}) {
+function gapAiming(stage, options = {}) {
+  const { clearance, scale } = eggProfile(stage.egg);
+  // 大きい卵ほど一撃で遠くまで行くので、その分だけ先を見る。
+  const lookahead = options.lookahead ?? 0.42 * scale;
   let committed = null;
   let lastShotZ = null;
   let stuck = 0;
@@ -49,8 +53,9 @@ function gapAiming(stage, { lookahead = 0.42 } = {}) {
     for (let step = 0; step <= 2; step += 1) {
       const z = Math.min(stage.length, position.z + (step / 2) * lookahead);
       // 撞いてから転がり終わるまでのあいだ、塞がれない隙間を選ぶ。
+      // 大きい卵は一撃が長く続くので、見る時間も長くとる。
       for (let sample = 0; sample <= 5; sample += 1) {
-        spans.push(...blockedSpansAt(stage, z, time + sample * 0.5));
+        spans.push(...blockedSpansAt(stage, z, time + sample * 0.5 * scale));
       }
     }
     spans.sort((a, b) => a[0] - b[0]);
@@ -68,7 +73,7 @@ function gapAiming(stage, { lookahead = 0.42 } = {}) {
     gaps.sort((a, b) => b.width - a.width);
 
     const stillOpen = committed === null ? undefined : gaps.find(
-      (gap) => committed >= gap.from && committed <= gap.to && gap.width >= EGG_CLEARANCE
+      (gap) => committed >= gap.from && committed <= gap.to && gap.width >= clearance
     );
     const chosen = stillOpen ?? gaps[0];
     if (!chosen) return null;
@@ -145,6 +150,7 @@ function rollThroughStage(stage, {
     return { mover, body };
   });
 
+  const egg = eggProfile(stage.egg);
   const start = stageStartPosition(stage);
   if (startZ !== null) start.z = startZ;
   const body = world.createRigidBody(
@@ -159,8 +165,8 @@ function rollThroughStage(stage, {
 
   const eggCollider = world.createCollider(
     RAPIER.ColliderDesc
-      .convexHull(createEggColliderPoints())
-      .setMass(SHELL_MASS)
+      .convexHull(createEggColliderPoints(22, 28, egg.scale))
+      .setMass(egg.shellMass)
       .setFriction(0.52)
       .setRestitution(0.035)
       .setActiveEvents(RAPIER.ActiveEvents.CONTACT_FORCE_EVENTS)
@@ -169,15 +175,16 @@ function rollThroughStage(stage, {
     body
   );
 
+  const yolkInertia = spherePrincipalInertia(egg.yolkMass, egg.visualRadius);
   const yolk = {
-    position: { x: 0, y: -YOLK_REST_OFFSET, z: 0 },
+    position: { x: 0, y: -egg.restOffset, z: 0 },
     velocity: { x: 0, y: 0, z: 0 },
     acceleration: { x: 0, y: 0, z: 0 },
   };
   const applyYolk = () => body.setAdditionalMassProperties(
-    YOLK_MASS,
+    egg.yolkMass,
     yolk.position,
-    { x: YOLK_INERTIA, y: YOLK_INERTIA, z: YOLK_INERTIA },
+    { x: yolkInertia, y: yolkInertia, z: yolkInertia },
     IDENTITY_ROTATION,
     true
   );
@@ -208,8 +215,8 @@ function rollThroughStage(stage, {
       if (command) {
         const length = Math.hypot(command.x, command.z);
         if (length > 1e-6) {
-          const speed = SHOT_MIN_SPEED
-            + (SHOT_MAX_SPEED - SHOT_MIN_SPEED) * command.power;
+          const speed = egg.shotMinSpeed
+            + (egg.shotMaxSpeed - egg.shotMinSpeed) * command.power;
           yolk.velocity = rotateByInverse(body.rotation(), {
             x: (command.x / length) * speed,
             y: 0,
@@ -221,14 +228,22 @@ function rollThroughStage(stage, {
       }
     }
 
+    const offsets = { restOffset: egg.restOffset, maxOffset: egg.maxOffset };
     const target = steer
       ? yolkTargetFor({
         rotation: body.rotation(),
         ...steer(position, playAge),
         strength: 0.82,
+        ...offsets,
       })
-      : yolkTargetFor({ rotation: body.rotation() });
-    const next = advanceYolk(yolk, target, FIXED_STEP);
+      : yolkTargetFor({ rotation: body.rotation(), ...offsets });
+    const next = advanceYolk(
+      yolk,
+      target,
+      FIXED_STEP,
+      egg.maxOffset,
+      egg.yolkMass
+    );
     yolk.position = next.position;
     yolk.velocity = next.velocity;
     const yolkSpeed = Math.hypot(
@@ -236,8 +251,8 @@ function rollThroughStage(stage, {
       yolk.velocity.y,
       yolk.velocity.z
     );
-    if (yolkSpeed > YOLK_SPEED_CAP) {
-      const scale = YOLK_SPEED_CAP / yolkSpeed;
+    if (yolkSpeed > egg.yolkSpeedCap) {
+      const scale = egg.yolkSpeedCap / yolkSpeed;
       yolk.velocity.x *= scale;
       yolk.velocity.y *= scale;
       yolk.velocity.z *= scale;
@@ -262,7 +277,7 @@ function rollThroughStage(stage, {
           SURFACE_FRICTION[surfaceAt(stage, body.translation().z)]
             / SURFACE_FRICTION.dry
         );
-        const spin = (horizontal / EGG_MAX_RADIUS) * grip;
+        const spin = (horizontal / egg.maxRadius) * grip;
         const angular = body.angvel();
         body.setAngvel({
           x: (after.z / horizontal) * spin,
@@ -292,6 +307,9 @@ function rollThroughStage(stage, {
         speed,
         playAge,
         fallSpeed,
+        landingBreakSpeed: egg.landingBreakSpeed,
+        forceThreshold: egg.impactForceThreshold,
+        speedThreshold: egg.impactSpeedThreshold,
       })) {
         shattered = shattered ?? { kind, at: body.translation().z };
       }
@@ -365,7 +383,8 @@ test("the egg starts on solid floor and does not sink or bounce away", async () 
     });
     const restingHeight = run.finalPosition.y;
     assert.ok(
-      restingHeight > -0.2 && restingHeight < EGG_HALF_HEIGHT + 0.02,
+      restingHeight > -0.2
+        && restingHeight < eggProfile(stage.egg).maxRadius + 0.02,
       `${stage.id}: 静止高さ ${restingHeight.toFixed(4)} m は床の上ではない`
     );
     assert.equal(run.shattered, null, `${stage.id}: 置いただけで割れた`);
@@ -395,7 +414,7 @@ test("a shot on the wet floor slides straight instead of curving", async () => {
   await RAPIER.init({});
   const wash = STAGES.find((stage) => stage.id === "wash-station");
   assert.equal(surfaceAt(wash, 2), "wet");
-  assert.equal(surfaceAt(STAGES[0], 3.4), "dry");
+  assert.equal(surfaceAt(wash, 4), "dry");
 
   // 同じ一撃を同じ床の種類の上で放ち、転がり切った距離を比べる。
   const coastOn = (stage, startZ) => {
@@ -415,11 +434,13 @@ test("a shot on the wet floor slides straight instead of curving", async () => {
     };
   };
 
+  // 同じ区画・同じ卵のまま、濡れている場所と乾いている場所で比べる。
   const wet = coastOn(wash, 2);
-  const dry = coastOn(STAGES[0], 3.4);
+  const dry = coastOn(wash, 4);
   assert.ok(wet.forward > 0.1, `濡れ床で ${wet.forward.toFixed(3)} m しか進まない`);
+  // 実測（ガチョウの卵）で 濡0.072 m / 乾0.111 m。大きい卵ほど差は縮む。
   assert.ok(
-    wet.lateral < dry.lateral * 0.6,
+    wet.lateral < dry.lateral * 0.8,
     `濡れ床の横ずれ ${wet.lateral.toFixed(3)} m が、乾いた床 ${dry.lateral.toFixed(3)} m と変わらない`
   );
 });

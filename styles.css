@@ -262,6 +262,49 @@ button:focus-visible {
   }
 }
 
+/* 猫の予告。逃げ場に入れているあいだは色が変わる。 */
+.cat-hint {
+  position: absolute;
+  z-index: 3;
+  left: 50%;
+  bottom: max(96px, calc(env(safe-area-inset-bottom) + 88px));
+  transform: translate(-50%, 6px);
+  padding: 0.42rem 0.85rem;
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: #f4d4c0;
+  background: rgba(46, 12, 8, 0.78);
+  border: 1px solid rgba(226, 118, 74, 0.66);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 180ms ease, transform 180ms ease;
+}
+
+.cat-hint.is-visible,
+.cat-hint.is-safe {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.cat-hint.is-safe {
+  color: #d7ecd2;
+  background: rgba(10, 26, 16, 0.78);
+  border-color: rgba(140, 200, 150, 0.6);
+}
+
+/* 前足が入った瞬間の一閃 */
+#game-shell.is-swiped::before {
+  animation: cat-swipe 300ms ease-out both;
+  background: rgba(226, 118, 74, 0.5);
+}
+
+@keyframes cat-swipe {
+  0% { opacity: 0; }
+  12% { opacity: 0.7; }
+  100% { opacity: 0; }
+}
+
 .veil {
   position: absolute;
   z-index: 5;

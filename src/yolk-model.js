@@ -41,23 +41,25 @@ export function yolkTargetFor({
   commandX = 0,
   commandZ = 0,
   strength = 0,
+  restOffset = YOLK_REST_OFFSET,
+  maxOffset = YOLK_MAX_OFFSET,
 }) {
   const localDown = rotateByInverse(rotation, { x: 0, y: -1, z: 0 });
   const target = {
-    x: localDown.x * YOLK_REST_OFFSET,
-    y: localDown.y * YOLK_REST_OFFSET,
-    z: localDown.z * YOLK_REST_OFFSET,
+    x: localDown.x * restOffset,
+    y: localDown.y * restOffset,
+    z: localDown.z * restOffset,
   };
 
   if (strength > 0 && (commandX !== 0 || commandZ !== 0)) {
     const control = rotateByInverse(rotation, { x: commandX, y: 0, z: commandZ });
-    const scale = YOLK_MAX_OFFSET * strength;
+    const scale = maxOffset * strength;
     target.x += control.x * scale;
     target.y += control.y * scale;
     target.z += control.z * scale;
   }
 
-  return clampVector3(target, YOLK_MAX_OFFSET);
+  return clampVector3(target, maxOffset);
 }
 
 // 撞く強さ（黄身へ与える速度）。3倍の世界の運動に合わせて弱めてある。
@@ -71,7 +73,14 @@ export const YOLK_SPEED_CAP = 1.3;
 const YOLK_SPRING = 184;
 const YOLK_DAMPING = 23;
 
-export function advanceYolk(state, target, dt) {
+// 黄身のばねは卵の大きさによらず同じ速さで追いつくが、可動域と質量は種類で変わる。
+export function advanceYolk(
+  state,
+  target,
+  dt,
+  maxOffset = YOLK_MAX_OFFSET,
+  yolkMass = YOLK_MASS
+) {
   const spring = YOLK_SPRING;
   const damping = YOLK_DAMPING;
   const acceleration = {
@@ -89,13 +98,13 @@ export function advanceYolk(state, target, dt) {
     x: state.position.x + velocity.x * dt,
     y: state.position.y + velocity.y * dt,
     z: state.position.z + velocity.z * dt,
-  }, YOLK_MAX_OFFSET);
+  }, maxOffset);
 
   // 黄身が殻の内壁へ達したら、外向きの速度はそこで止まる。
   // その分の運動量は消えるのではなく殻へ渡る。返り値の wallImpulse が
   // 「内側から蹴られた分」で、これを殻の剛体へ与えると卵が動き出す。
   const wallImpulse = { x: 0, y: 0, z: 0 };
-  if (Math.hypot(position.x, position.y, position.z) >= YOLK_MAX_OFFSET * 0.999) {
+  if (Math.hypot(position.x, position.y, position.z) >= maxOffset * 0.999) {
     const normalLength = Math.max(1e-9, Math.hypot(position.x, position.y, position.z));
     const nx = position.x / normalLength;
     const ny = position.y / normalLength;
@@ -105,9 +114,9 @@ export function advanceYolk(state, target, dt) {
       velocity.x -= nx * outwardSpeed;
       velocity.y -= ny * outwardSpeed;
       velocity.z -= nz * outwardSpeed;
-      wallImpulse.x = nx * outwardSpeed * YOLK_MASS;
-      wallImpulse.y = ny * outwardSpeed * YOLK_MASS;
-      wallImpulse.z = nz * outwardSpeed * YOLK_MASS;
+      wallImpulse.x = nx * outwardSpeed * yolkMass;
+      wallImpulse.y = ny * outwardSpeed * yolkMass;
+      wallImpulse.z = nz * outwardSpeed * yolkMass;
     }
   }
 

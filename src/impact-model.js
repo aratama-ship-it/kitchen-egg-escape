@@ -15,15 +15,15 @@ export function shouldShatter({
   speed,
   playAge,
   fallSpeed = 0,
+  landingBreakSpeed = LANDING_BREAK_SPEED,
+  forceThreshold = OBJECT_IMPACT_FORCE_THRESHOLD,
+  speedThreshold = OBJECT_IMPACT_SPEED_THRESHOLD,
 }) {
   if (colliderKind === "unknown") return false;
   if (playAge < IMPACT_GRACE_SECONDS) return false;
   // 床は転がっているあいだずっと触れているので、落ちてきた速さだけを見る。
-  if (colliderKind === "floor") return fallSpeed >= LANDING_BREAK_SPEED;
-  return (
-    forceMagnitude >= OBJECT_IMPACT_FORCE_THRESHOLD &&
-    speed >= OBJECT_IMPACT_SPEED_THRESHOLD
-  );
+  if (colliderKind === "floor") return fallSpeed >= landingBreakSpeed;
+  return forceMagnitude >= forceThreshold && speed >= speedThreshold;
 }
 
 export function mulberry32(seed) {

@@ -75,6 +75,7 @@ export function buildStage(stage, { scene, world }) {
   buildProps();
   buildMovers();
   buildGate();
+  buildShelters();
   if (stage.bank) buildBankHint();
 
   function buildFloor() {
@@ -95,6 +96,18 @@ export function buildStage(stage, { scene, world }) {
       if (section.surface === "wet") buildPuddles(section);
       if (section.surface === "grease") buildSheen(section, 0x6d5c33, 0.16);
     }
+
+    // 大きい卵ではカメラが後ろへ下がるので、手前の床が切れて見える。
+    // 見た目だけ手前へ伸ばしておく（剛体は区画の範囲のまま）。
+    const firstSection = floorSpans(stage)[0];
+    const approach = new THREE.Mesh(
+      track(new THREE.PlaneGeometry(stage.halfWidth * 2, 2.4)),
+      material(SURFACE_LOOK[firstSection.surface])
+    );
+    approach.rotation.x = -Math.PI / 2;
+    approach.position.set(0, -0.0004, -1.2);
+    approach.receiveShadow = true;
+    group.add(approach);
 
     const grid = new THREE.GridHelper(
       Math.max(stage.halfWidth * 2, stage.length),
@@ -362,6 +375,54 @@ export function buildStage(stage, { scene, world }) {
     line.position.set(0, 0.0018, stage.length);
     line.renderOrder = 2;
     group.add(line);
+  }
+
+  // 猫の前足が届かない隙間。床の色と縁で「ここは安全」と読めるようにする。
+  function buildShelters() {
+    for (const shelter of stage.shelters ?? []) {
+      const width = shelter.toX - shelter.fromX;
+      const depth = shelter.toZ - shelter.fromZ;
+      const centerX = (shelter.fromX + shelter.toX) / 2;
+      const centerZ = (shelter.fromZ + shelter.toZ) / 2;
+
+      const floorPatch = new THREE.Mesh(
+        track(new THREE.PlaneGeometry(width, depth)),
+        track(new THREE.MeshBasicMaterial({
+          color: 0x9ccfa8,
+          transparent: true,
+          opacity: 0.26,
+          depthWrite: false,
+        }))
+      );
+      floorPatch.rotation.x = -Math.PI / 2;
+      floorPatch.position.set(centerX, 0.0022, centerZ);
+      floorPatch.renderOrder = 2;
+      group.add(floorPatch);
+
+      // 縁だけを明るくして、境目がどこかをはっきりさせる。
+      const edgeMaterial = track(new THREE.MeshBasicMaterial({
+        color: 0xbfe6c6,
+        transparent: true,
+        opacity: 0.72,
+        depthWrite: false,
+      }));
+      const edges = [
+        [width, 0.018, centerX, shelter.fromZ],
+        [width, 0.018, centerX, shelter.toZ],
+        [0.018, depth, shelter.fromX, centerZ],
+        [0.018, depth, shelter.toX, centerZ],
+      ];
+      for (const [w, d, x, z] of edges) {
+        const edge = new THREE.Mesh(
+          track(new THREE.PlaneGeometry(w, d)),
+          edgeMaterial
+        );
+        edge.rotation.x = -Math.PI / 2;
+        edge.position.set(x, 0.0026, z);
+        edge.renderOrder = 3;
+        group.add(edge);
+      }
+    }
   }
 
   // 傾きは視界の中では気づきにくいので、床の低い側に水の流れる筋を引く。

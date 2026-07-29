@@ -16,13 +16,31 @@ import {
   validateStage,
   widestGapAt,
 } from "../src/stages.js";
-import { EGG_MAX_RADIUS } from "../src/egg-shape.js";
+import { EGG_TYPES, eggProfile } from "../src/egg-types.js";
 import { rotateByInverse } from "../src/yolk-model.js";
 
 test("every stage is internally consistent and can be completed", () => {
   for (const stage of STAGES) {
     assert.deepEqual(validateStage(stage), [], `${stage.id} に設計上の問題がある`);
   }
+});
+
+test("each stage names an egg, and they shrink as the course goes on", () => {
+  const known = new Set(EGG_TYPES.map((type) => type.id));
+  const scales = STAGES.map((stage) => {
+    assert.ok(known.has(stage.egg), `${stage.id}: 知らない卵 ${stage.egg}`);
+    return eggProfile(stage.egg).scale;
+  });
+  for (let index = 1; index < scales.length; index += 1) {
+    assert.ok(
+      scales[index] < scales[index - 1],
+      `${STAGES[index].id}: 前の区画より卵が小さくなっていない`
+    );
+  }
+});
+
+test("a bigger egg needs a wider gap than a smaller one", () => {
+  assert.ok(eggProfile("ostrich").clearance > eggProfile("quail").clearance * 2);
 });
 
 test("stage ids and names are unique", () => {
@@ -124,7 +142,7 @@ test("each stage starts the egg lying on its side on its own floor", () => {
   for (const stage of STAGES) {
     const start = stageStartPosition(stage);
     const local = toWorld({ bank: -(stage.bank ?? 0) }, start.x, start.y, start.z);
-    assert.ok(Math.abs(local.y - (EGG_MAX_RADIUS + 0.001)) < 1e-9);
+    assert.ok(Math.abs(local.y - (eggProfile(stage.egg).maxRadius + 0.001)) < 1e-9);
     assert.ok(start.z > 0 && start.z < stage.length);
 
     // 横倒し：殻の長軸が進行方向と直交していないと転がり出せない。

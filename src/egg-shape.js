@@ -15,13 +15,13 @@ export function eggRadiusAt(normalizedY) {
   return EGG_MAX_RADIUS * ellipse * taper * shoulder;
 }
 
-export function createEggProfile(rings = 32) {
+export function createEggProfile(rings = 32, scale = 1) {
   const profile = [];
   for (let i = 0; i <= rings; i += 1) {
     const normalizedY = -1 + (i / rings) * 2;
     profile.push(new THREE.Vector2(
-      eggRadiusAt(normalizedY),
-      normalizedY * EGG_HALF_HEIGHT
+      eggRadiusAt(normalizedY) * scale,
+      normalizedY * EGG_HALF_HEIGHT * scale
     ));
   }
   return profile;
@@ -35,9 +35,9 @@ export function eggAsymmetryFactor(normalizedY, angle) {
   ) * middleWeight;
 }
 
-export function createEggGeometry(rings = 128, radialSegments = 128) {
+export function createEggGeometry(rings = 128, radialSegments = 128, scale = 1) {
   const geometry = new THREE.LatheGeometry(
-    createEggProfile(rings),
+    createEggProfile(rings, scale),
     radialSegments,
     0,
     Math.PI * 2
@@ -48,7 +48,7 @@ export function createEggGeometry(rings = 128, radialSegments = 128) {
     const y = positions.getY(index);
     const z = positions.getZ(index);
     const angle = Math.atan2(z, x);
-    const normalizedY = THREE.MathUtils.clamp(y / EGG_HALF_HEIGHT, -1, 1);
+    const normalizedY = THREE.MathUtils.clamp(y / (EGG_HALF_HEIGHT * scale), -1, 1);
     const factor = eggAsymmetryFactor(normalizedY, angle);
     positions.setXYZ(index, x * factor, y, z * factor);
   }
@@ -59,12 +59,12 @@ export function createEggGeometry(rings = 128, radialSegments = 128) {
   return geometry;
 }
 
-export function createEggColliderPoints(rings = 22, radialSegments = 28) {
+export function createEggColliderPoints(rings = 22, radialSegments = 28, scale = 1) {
   const points = [];
   for (let ring = 0; ring <= rings; ring += 1) {
     const normalizedY = -1 + (ring / rings) * 2;
-    const y = normalizedY * EGG_HALF_HEIGHT;
-    const radius = eggRadiusAt(normalizedY);
+    const y = normalizedY * EGG_HALF_HEIGHT * scale;
+    const radius = eggRadiusAt(normalizedY) * scale;
 
     if (ring === 0 || ring === rings) {
       points.push(0, y, 0);

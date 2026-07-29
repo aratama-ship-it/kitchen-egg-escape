@@ -23,15 +23,18 @@ import {
   shouldShatter,
 } from "./impact-model.js";
 import {
+  CAT_WARNING_SECONDS,
   STAGES,
   SURFACE_FRICTION,
   WORLD_GRAVITY,
   draftForceAt,
+  isSheltered,
   stageStartPosition,
   stageStartRotation,
   surfaceAt,
 } from "./stages.js";
 import { buildStage } from "./stage-builder.js";
+import { eggProfile } from "./egg-types.js";
 
 const gameShell = document.getElementById("game-shell");
 const canvas = document.getElementById("game-canvas");
@@ -50,6 +53,7 @@ const attemptCount = document.getElementById("attempt-count");
 const stageDots = document.getElementById("stage-dots");
 const stallHint = document.getElementById("stall-hint");
 const homeButton = document.getElementById("home-button");
+const catHint = document.getElementById("cat-hint");
 const stageBrief = document.getElementById("stage-brief");
 const introBrief = document.getElementById("intro-brief");
 const dragHint = document.getElementById("drag-hint");
@@ -69,7 +73,6 @@ const IDENTITY_ROTATION = { x: 0, y: 0, z: 0, w: 1 };
 // 打っているあいだは卵を下へ落として、その先の床を広く見せる。
 const TITLE_FRAMING = { height: 0.075, back: 0.34, lookAhead: 0.24 };
 const PLAY_FRAMING = { height: 0.095, back: 0.34, lookAhead: 1.05 };
-const YOLK_INERTIA = spherePrincipalInertia(YOLK_MASS, YOLK_VISUAL_RADIUS);
 const NORMAL_EXPOSURE = 1.08;
 const SHATTER_RESULT_DELAY = 1.45;
 const REDUCE_MOTION = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -93,6 +96,8 @@ let stuckShots = 0;
 let progressMark = 0;
 let settledNoted = true;
 let cameraFraming = 0;
+// 猫はときどき前足を入れてくる。理不尽だが、隙間にいるあいだは届かない。
+const cat = { nextAt: Infinity, warning: false, swipeAge: Infinity, side: 1 };
 
 // 狙い。撞く向き（進みたい向き）と、引いた量から決まる力。
 const aim = {
@@ -109,7 +114,7 @@ const aim = {
 const currentStage = () => STAGES[stageIndex];
 
 const yolkState = {
-  position: { x: 0, y: -YOLK_REST_OFFSET, z: 0 },
+  position: { x: 0, y: -0.0045, z: 0 },
   velocity: { x: 0, y: 0, z: 0 },
   acceleration: { x: 0, y: 0, z: 0 },
 };
@@ -240,16 +245,35 @@ const eggBodyDesc = RAPIER.RigidBodyDesc.dynamic()
 const eggBody = world.createRigidBody(eggBodyDesc);
 eggBody.setAdditionalSolverIterations(8);
 
-const eggColliderDesc = RAPIER.ColliderDesc.convexHull(createEggColliderPoints());
-if (!eggColliderDesc) throw new Error("卵形状の凸包を作成できませんでした。");
-eggColliderDesc
-  .setMass(SHELL_MASS)
-  .setFriction(0.52)
-  .setRestitution(0.035)
-  .setActiveEvents(RAPIER.ActiveEvents.CONTACT_FORCE_EVENTS)
-  .setContactForceEventThreshold(0.08)
-  .setFrictionCombineRule(RAPIER.CoefficientCombineRule.Average);
-const eggCollider = world.createCollider(eggColliderDesc, eggBody);
+// 区画ごとに卵の種類が変わる。殻の形も質量も、そのつど作り直す。
+let egg = eggProfile(STAGES[0].egg);
+let eggCollider = null;
+let yolkInertia = 0;
+
+function applyEggType(profile) {
+  egg = profile;
+  if (eggCollider) world.removeCollider(eggCollider, false);
+
+  const points = createEggColliderPoints(22, 28, profile.scale);
+  const desc = RAPIER.ColliderDesc.convexHull(points);
+  if (!desc) throw new Error("卵形状の凸包を作成できませんでした。");
+  desc
+    .setMass(profile.shellMass)
+    .setFriction(0.52)
+    .setRestitution(0.035)
+    .setActiveEvents(RAPIER.ActiveEvents.CONTACT_FORCE_EVENTS)
+    .setContactForceEventThreshold(0.08)
+    .setFrictionCombineRule(RAPIER.CoefficientCombineRule.Average);
+  eggCollider = world.createCollider(desc, eggBody);
+
+  yolkInertia = spherePrincipalInertia(profile.yolkMass, profile.visualRadius);
+  shellMesh.scale.setScalar(profile.scale);
+  shellMaterial.color.setHex(profile.shell);
+  yolkMaterial.color.setHex(profile.yolk);
+  yolkState.position = { x: 0, y: -profile.restOffset, z: 0 };
+  yolkState.velocity = { x: 0, y: 0, z: 0 };
+  applyYolkMassProperties();
+}
 applyYolkMassProperties();
 loadStage(openingStageIndex());
 syncEggVisual();
@@ -257,7 +281,7 @@ syncEggVisual();
 mode = "intro";
 startButton.disabled = false;
 startButton.textContent = "厨房へ出る";
-introBrief.textContent = currentStage().brief;
+introBrief.textContent = `${egg.note}　${currentStage().brief}`;
 physicsReadout.textContent = "剛体 120 Hz · 凸形状 590点 · 質量 60 g";
 renderer.setAnimationLoop(frame);
 
@@ -276,10 +300,14 @@ function loadStage(index) {
   stageIndex = Math.max(0, Math.min(STAGES.length - 1, index));
   stageHandle?.dispose();
   stageHandle = buildStage(currentStage(), { scene, world });
+  applyEggType(eggProfile(currentStage().egg));
   applyAtmosphere(currentStage());
   buildStageDots();
   placeEggAtStart();
   stageTime = 0;
+  cat.nextAt = currentStage().cat ? currentStage().cat.firstAt : Infinity;
+  cat.warning = false;
+  cat.swipeAge = Infinity;
 }
 
 function applyAtmosphere(stage) {
@@ -302,9 +330,9 @@ function placeEggAtStart() {
 
 function applyYolkMassProperties() {
   eggBody.setAdditionalMassProperties(
-    YOLK_MASS,
+    egg.yolkMass,
     yolkState.position,
-    { x: YOLK_INERTIA, y: YOLK_INERTIA, z: YOLK_INERTIA },
+    { x: yolkInertia, y: yolkInertia, z: yolkInertia },
     IDENTITY_ROTATION,
     true
   );
@@ -313,15 +341,56 @@ function applyYolkMassProperties() {
 // 狙いをつけているあいだ、黄身は撞く向きと反対側へ溜まる。
 // 放つと、その溜めが速度になって進みたい側の内壁へ走る。
 function currentYolkTarget() {
+  const offsets = { restOffset: egg.restOffset, maxOffset: egg.maxOffset };
   if (!aim.active || aim.power <= 0) {
-    return yolkTargetFor({ rotation: eggBody.rotation() });
+    return yolkTargetFor({ rotation: eggBody.rotation(), ...offsets });
   }
   return yolkTargetFor({
     rotation: eggBody.rotation(),
     commandX: -aim.x,
     commandZ: -aim.z,
     strength: aim.power,
+    ...offsets,
   });
+}
+
+// 予告 → 一撃、の順で来る。予告のあいだに隙間へ入れば当たらない。
+function updateCat() {
+  const stage = currentStage();
+  if (!stage.cat) return;
+
+  if (cat.swipeAge < 0.5) cat.swipeAge += FIXED_STEP;
+
+  if (stageTime >= cat.nextAt - CAT_WARNING_SECONDS && !cat.warning) {
+    cat.warning = true;
+    const position = eggBody.translation();
+    cat.side = position.x >= 0 ? 1 : -1;
+    playCatSound();
+  }
+
+  if (stageTime < cat.nextAt) return;
+  cat.nextAt = stageTime + stage.cat.every;
+  cat.warning = false;
+  cat.swipeAge = 0;
+
+  const position = eggBody.translation();
+  if (isSheltered(stage, position.x, position.z)) {
+    srStatus.textContent = "猫の前足が届かなかった。";
+    return;
+  }
+
+  // 弾かれる向きは決まっていない。理不尽さはここに置く。
+  const angle = mulberry32(
+    Math.round(stageTime * 1000) + stageIndex * 977
+  )() * Math.PI * 2;
+  const push = stage.cat.strength * egg.scale * egg.scale;
+  eggBody.applyImpulse(
+    { x: Math.cos(angle) * push, y: 0, z: Math.sin(angle) * push },
+    true
+  );
+  gameShell.classList.add("is-swiped");
+  setTimeout(() => gameShell.classList.remove("is-swiped"), 320);
+  srStatus.textContent = "猫に弾かれました。";
 }
 
 function isEggSettled() {
@@ -335,8 +404,8 @@ function capYolkSpeed() {
     yolkState.velocity.y,
     yolkState.velocity.z
   );
-  if (speed <= YOLK_SPEED_CAP) return;
-  const scale = YOLK_SPEED_CAP / speed;
+  if (speed <= egg.yolkSpeedCap) return;
+  const scale = egg.yolkSpeedCap / speed;
   yolkState.velocity.x *= scale;
   yolkState.velocity.y *= scale;
   yolkState.velocity.z *= scale;
@@ -351,7 +420,7 @@ function rollWithKick() {
   const stage = currentStage();
   const friction = SURFACE_FRICTION[surfaceAt(stage, eggBody.translation().z)];
   const grip = THREE.MathUtils.clamp(friction / SURFACE_FRICTION.dry, 0, 1);
-  const spin = (horizontal / EGG_MAX_RADIUS) * grip;
+  const spin = (horizontal / egg.maxRadius) * grip;
   const angular = eggBody.angvel();
   eggBody.setAngvel(
     {
@@ -369,7 +438,8 @@ function fireShot(dirX, dirZ, power) {
   const length = Math.hypot(dirX, dirZ);
   if (length < 1e-6) return;
 
-  const speed = SHOT_MIN_SPEED + (SHOT_MAX_SPEED - SHOT_MIN_SPEED) * power;
+  const speed = egg.shotMinSpeed
+    + (egg.shotMaxSpeed - egg.shotMinSpeed) * power;
   const rotation = eggBody.rotation();
   const local = rotateByInverse(rotation, {
     x: (dirX / length) * speed,
@@ -390,6 +460,7 @@ function physicsStep() {
   stageTime += FIXED_STEP;
   stageHandle.update(stageTime);
   shotCooldown = Math.max(0, shotCooldown - FIXED_STEP);
+  updateCat();
   if (shotCooldown === 0 && shotsTaken > 0 && !aim.active && isEggSettled()) {
     if (!settledNoted) {
       settledNoted = true;
@@ -397,7 +468,13 @@ function physicsStep() {
     }
   }
 
-  const nextYolk = advanceYolk(yolkState, currentYolkTarget(), FIXED_STEP);
+  const nextYolk = advanceYolk(
+    yolkState,
+    currentYolkTarget(),
+    FIXED_STEP,
+    egg.maxOffset,
+    egg.yolkMass
+  );
   yolkState.position = nextYolk.position;
   yolkState.velocity = nextYolk.velocity;
   yolkState.acceleration = nextYolk.acceleration;
@@ -476,6 +553,9 @@ function strongestObjectImpact(speed, fallSpeed) {
       speed,
       playAge,
       fallSpeed,
+      landingBreakSpeed: egg.landingBreakSpeed,
+      forceThreshold: egg.impactForceThreshold,
+      speedThreshold: egg.impactSpeedThreshold,
     })) return;
 
     if (!strongest || forceMagnitude > strongest.forceMagnitude) {
@@ -604,30 +684,37 @@ function updateCamera(dt) {
   const wantsPlayFraming = mode === "playing" || mode === "breaking";
   const framingStep = 1 - Math.exp(-3.4 * Math.max(dt, 1 / 120));
   cameraFraming += ((wantsPlayFraming ? 1 : 0) - cameraFraming) * framingStep;
+  // 卵の種類で大きさが変わるので、引きも同じ倍率で変える。
+  // そうしないとダチョウの卵が画面いっぱいになってしまう。
+  const zoom = egg.scale;
   const height = THREE.MathUtils.lerp(
     TITLE_FRAMING.height,
     PLAY_FRAMING.height,
     cameraFraming
-  );
+  ) * zoom;
   const back = THREE.MathUtils.lerp(
     TITLE_FRAMING.back,
     PLAY_FRAMING.back,
     cameraFraming
-  );
+  ) * zoom;
   const lookAhead = THREE.MathUtils.lerp(
     TITLE_FRAMING.lookAhead,
     PLAY_FRAMING.lookAhead,
     cameraFraming
-  );
+  ) * zoom;
 
   const targetPosition = new THREE.Vector3(
     position.x * 0.82 + Math.sin(breakState.age * 128) * shake,
-    Math.max(0.105, position.y + height),
+    Math.max(0.105 * egg.scale, position.y + height),
     position.z - back + Math.cos(breakState.age * 91) * shake * 0.45
   );
   const smoothing = 1 - Math.exp(-7.5 * Math.max(dt, 1 / 120));
   camera.position.lerp(targetPosition, smoothing);
-  camera.lookAt(position.x, Math.max(0.035, position.y), position.z + lookAhead);
+  camera.lookAt(
+    position.x,
+    Math.max(0.035 * egg.scale, position.y),
+    position.z + lookAhead
+  );
 }
 
 function shatterEgg(impact) {
@@ -696,7 +783,7 @@ function createBreakEffect(position, linearVelocity, impact) {
     opacity: 0.96,
   });
   const spilledYolk = new THREE.Mesh(
-    new THREE.SphereGeometry(YOLK_VISUAL_RADIUS * 1.08, 32, 18),
+    new THREE.SphereGeometry(egg.visualRadius * 1.08, 32, 18),
     spilledYolkMaterial
   );
   spilledYolk.position.set(
@@ -726,8 +813,8 @@ function createBreakEffect(position, linearVelocity, impact) {
   impactDirection.normalize();
 
   for (let index = 0; index < fragmentCount; index += 1) {
-    const width = 0.007 + random() * 0.012;
-    const height = 0.008 + random() * 0.014;
+    const width = (0.007 + random() * 0.012) * egg.scale;
+    const height = (0.008 + random() * 0.014) * egg.scale;
     const shard = new THREE.Mesh(
       createShardGeometry(width, height, (random() - 0.5) * 0.7),
       shardMaterial
@@ -945,6 +1032,27 @@ function buildStageDots() {
   }));
 }
 
+// 猫が来る予告。低く短いうなりだけで、姿は影で見せる。
+function playCatSound() {
+  const context = ensureAudioContext();
+  if (!context) return;
+  const now = context.currentTime;
+  const oscillator = context.createOscillator();
+  oscillator.type = "sawtooth";
+  oscillator.frequency.setValueAtTime(78, now);
+  oscillator.frequency.linearRampToValueAtTime(52, now + 0.55);
+  const filter = context.createBiquadFilter();
+  filter.type = "lowpass";
+  filter.frequency.value = 320;
+  const gain = context.createGain();
+  gain.gain.setValueAtTime(0.0001, now);
+  gain.gain.exponentialRampToValueAtTime(0.05, now + 0.12);
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.6);
+  oscillator.connect(filter).connect(gain).connect(context.destination);
+  oscillator.start(now);
+  oscillator.stop(now + 0.62);
+}
+
 // 撞いた瞬間の音。強さで高さと長さが変わる、短い打撃音。
 function playShotSound(power) {
   const context = ensureAudioContext();
@@ -1003,10 +1111,19 @@ function updateHud() {
   const progress = THREE.MathUtils.clamp((position.z / stage.length) * 100, 0, 100);
   progressFill.style.width = `${progress.toFixed(1)}%`;
   const surface = SURFACE_LABEL[surfaceAt(stage, Math.max(0, position.z))] ?? "";
+  const sheltered = isSheltered(stage, position.x, position.z);
+  const catComing = stage.cat && cat.warning;
+  catHint.classList.toggle("is-visible", Boolean(catComing) && !sheltered);
+  catHint.classList.toggle("is-safe", Boolean(catComing) && sheltered);
+  if (catComing) {
+    catHint.firstElementChild.textContent = sheltered
+      ? "隙間にいる。前足は届かない"
+      : "猫が来る。隙間へ逃げる";
+  }
   distanceLabel.textContent =
     `この区画の残り ${Math.max(0, stage.length - position.z).toFixed(1)} m　／　${surface}`;
   physicsReadout.textContent =
-    `重心 ${offsetMm.toFixed(1)} mm · 横ずれ ${(position.x * 100).toFixed(1)} cm · 速度 ${speed.toFixed(2)} m/s · 角速度 ${angularSpeed.toFixed(1)} rad/s`;
+    `${egg.name} ${Math.round((egg.shellMass + egg.yolkMass) * 1000)} g · 速度 ${speed.toFixed(2)} m/s · 角速度 ${angularSpeed.toFixed(1)} rad/s`;
   zoneName.textContent = `${stageIndex + 1}　${stage.name}`;
   attemptCount.textContent = `${shotsTaken}打　${attempt}個目`;
 }
@@ -1029,9 +1146,10 @@ function returnToIntro() {
   renderer.toneMappingExposure = NORMAL_EXPOSURE;
   gameShell.classList.remove("is-broken");
   stallHint.classList.remove("is-visible");
+  catHint.classList.remove("is-visible", "is-safe");
   dragHint.classList.remove("is-hidden");
   result.classList.remove("is-visible", "is-shatter-result", "is-stage-clear");
-  introBrief.textContent = currentStage().brief;
+  introBrief.textContent = `${eggProfile(currentStage().egg).note}　${currentStage().brief}`;
   startButton.textContent = `${currentStage().name}へ`;
   intro.classList.add("is-visible");
   updateHud();
@@ -1057,7 +1175,7 @@ function beginPlay() {
   breakState.resultShown = false;
   shellMesh.visible = true;
   yolkMesh.visible = true;
-  yolkState.position = { x: 0, y: -YOLK_REST_OFFSET, z: 0 };
+  yolkState.position = { x: 0, y: -egg.restOffset, z: 0 };
   yolkState.velocity = { x: 0, y: 0, z: 0 };
   yolkState.acceleration = { x: 0, y: 0, z: 0 };
   aim.active = false;
@@ -1121,7 +1239,7 @@ function clearStage() {
     `${stageIndex + 1} / ${STAGES.length}　${stage.subtitle}　${shotsTaken}打`;
   resultTitle.textContent = stage.clear.title;
   resultMessage.textContent = stage.clear.message;
-  stageBrief.textContent = `次は「${next.name}」。${next.brief}`;
+  stageBrief.textContent = `次は「${next.name}」。${eggProfile(next.egg).name}になる。${next.brief}`;
   retryButton.textContent = `${next.name}へ`;
   result.classList.add("is-visible");
   retryButton.focus();
