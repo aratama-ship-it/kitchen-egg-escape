@@ -25,7 +25,7 @@ test("every stage is internally consistent and can be completed", () => {
   }
 });
 
-test("each stage names an egg, and they shrink as the course goes on", () => {
+test("each stage names a known egg, and never gets bigger as it goes", () => {
   const known = new Set(EGG_TYPES.map((type) => type.id));
   const scales = STAGES.map((stage) => {
     assert.ok(known.has(stage.egg), `${stage.id}: 知らない卵 ${stage.egg}`);
@@ -33,10 +33,29 @@ test("each stage names an egg, and they shrink as the course goes on", () => {
   });
   for (let index = 1; index < scales.length; index += 1) {
     assert.ok(
-      scales[index] < scales[index - 1],
-      `${STAGES[index].id}: 前の区画より卵が小さくなっていない`
+      scales[index] <= scales[index - 1],
+      `${STAGES[index].id}: 前の区画より卵が大きくなっている`
     );
   }
+});
+
+// 猫の強さは、その区画の卵で実際に測って決めている（ニワトリの卵で1.4〜1.5m）。
+// 確かめていない大きさの卵に猫を出すと、弾かれた卵が飛んで計算が荒れる。
+test("stages with a cat use an egg the cat strength was measured against", () => {
+  for (const stage of STAGES) {
+    if (!stage.cat) continue;
+    assert.ok(
+      eggProfile(stage.egg).scale <= 1,
+      `${stage.id}: ${eggProfile(stage.egg).name}に猫を出す場合は強さを測り直すこと`
+    );
+    assert.ok(stage.cat.strength > 0.08, `${stage.id}: 猫が弱すぎる`);
+    assert.ok(stage.cat.strength < 0.16, `${stage.id}: 猫が強すぎて卵が飛ぶ`);
+  }
+});
+
+test("the standard egg is the chicken one", () => {
+  const chicken = STAGES.filter((stage) => stage.egg === "chicken").length;
+  assert.ok(chicken >= STAGES.length - 1, "基本の卵になっていない区画が多い");
 });
 
 test("a bigger egg needs a wider gap than a smaller one", () => {

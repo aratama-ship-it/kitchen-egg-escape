@@ -65,6 +65,8 @@ const FIXED_STEP = 1 / 120;
 const TIME_SCALE = 1.2;
 const MAX_STEPS_PER_FRAME = 40;
 const SHOT_COOLDOWN = 0.28;
+// 猫に弾かれて得る速度の上限。これ以上は卵が跳ねて飛んでしまう。
+const CAT_MAX_SPEED_CHANGE = 1.8;
 // 指を滑らせた距離がこの画素数で最大の力になる。
 const AIM_FULL_PULL = 132;
 const AIM_DEAD_ZONE = 10;
@@ -383,7 +385,14 @@ function updateCat() {
   const angle = mulberry32(
     Math.round(stageTime * 1000) + stageIndex * 977
   )() * Math.PI * 2;
-  const push = stage.cat.strength * egg.scale * egg.scale;
+  // 質量は倍率の3乗で増えるので、同じだけ動かすには3.5乗で掛ける
+  // （速度は√倍率で揃う）。2乗ではダチョウの卵がびくともしなかった。
+  // ただし与える速度には上限を置く。これを超えると卵が飛んで計算が荒れる。
+  const mass = egg.shellMass + egg.yolkMass;
+  const push = Math.min(
+    stage.cat.strength * Math.pow(egg.scale, 3.5),
+    mass * CAT_MAX_SPEED_CHANGE
+  );
   eggBody.applyImpulse(
     { x: Math.cos(angle) * push, y: 0, z: Math.sin(angle) * push },
     true

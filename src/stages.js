@@ -103,7 +103,7 @@ export const STAGES = [
   },
   {
     id: "wash-station",
-    egg: "goose",
+    egg: "chicken",
     name: "洗い場",
     subtitle: "WASH STATION",
     brief: "床が濡れている。撞いても転がらず、まっすぐ滑るだけ。曲がってはくれない。",
@@ -168,7 +168,7 @@ export const STAGES = [
     ],
     movers: [],
     // 洗い場ではじめて猫が出る。流し台の脚の奥が逃げ場になる。
-    cat: { firstAt: 9, every: 11, strength: 0.05 },
+    cat: { firstAt: 9, every: 11, strength: 0.1 },
     shelters: [
       { fromX: -1.15, toX: -0.72, fromZ: 1.6, toZ: 2.4, label: "流し台の下" },
       { fromX: 0.72, toX: 1.15, fromZ: 2.7, toZ: 3.5, label: "洗い桶の陰" },
@@ -180,7 +180,7 @@ export const STAGES = [
   },
   {
     id: "service-aisle",
-    egg: "duck",
+    egg: "chicken",
     name: "配膳通路",
     subtitle: "SERVICE AISLE",
     brief: "配膳カートが通路を横切る。撞いたら止まれない。渡るなら通り過ぎた直後。",
@@ -216,7 +216,7 @@ export const STAGES = [
         phase: -Math.PI / 2,
       },
     ],
-    cat: { firstAt: 7, every: 9, strength: 0.055 },
+    cat: { firstAt: 7, every: 9, strength: 0.11 },
     shelters: [
       { fromX: -1.15, toX: -0.78, fromZ: 2.2, toZ: 3.1, label: "台車の陰" },
       { fromX: 0.78, toX: 1.15, fromZ: 2.2, toZ: 3.1, label: "壁ぎわ" },
@@ -273,7 +273,7 @@ export const STAGES = [
       },
     ],
     movers: [],
-    cat: { firstAt: 6, every: 8, strength: 0.05 },
+    cat: { firstAt: 6, every: 8, strength: 0.11 },
     shelters: [
       { fromX: 0.7, toX: 1.15, fromZ: 1.8, toZ: 2.8, label: "冷蔵庫の隙間" },
     ],
@@ -284,7 +284,7 @@ export const STAGES = [
   },
   {
     id: "back-door",
-    egg: "quail",
+    egg: "chicken",
     name: "裏口",
     subtitle: "BACK DOOR",
     brief: "扉の下は、通路の八分の一しか開いていない。最後は、速さより正確さ。",
@@ -321,7 +321,7 @@ export const STAGES = [
       },
     ],
     movers: [],
-    cat: { firstAt: 5, every: 7, strength: 0.04 },
+    cat: { firstAt: 5, every: 7, strength: 0.1 },
     shelters: [
       { fromX: -1.15, toX: -0.75, fromZ: 1.0, toZ: 1.9, label: "扉のくぼみ" },
       { fromX: 0.75, toX: 1.15, fromZ: 1.0, toZ: 1.9, label: "壁のくぼみ" },
