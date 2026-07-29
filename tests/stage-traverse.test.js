@@ -277,6 +277,7 @@ function rollThroughStage(stage, {
 
     const before = body.linvel();
     const speed = Math.hypot(before.x, before.y, before.z);
+    const fallSpeed = Math.max(0, -before.y);
     world.step(events);
 
     events.drainContactForceEvents((event) => {
@@ -290,6 +291,7 @@ function rollThroughStage(stage, {
         forceMagnitude: event.totalForceMagnitude(),
         speed,
         playAge,
+        fallSpeed,
       })) {
         shattered = shattered ?? { kind, at: body.translation().z };
       }

@@ -124,6 +124,7 @@ const breakState = {
   group: new THREE.Group(),
   albumen: null,
   yolk: null,
+  byLanding: false,
 };
 
 const renderer = new THREE.WebGLRenderer({
@@ -422,9 +423,10 @@ function physicsStep() {
     velocityBeforeStep.y,
     velocityBeforeStep.z
   );
+  const fallSpeedBeforeStep = Math.max(0, -velocityBeforeStep.y);
   world.step(eventQueue);
 
-  const impact = strongestObjectImpact(speedBeforeStep);
+  const impact = strongestObjectImpact(speedBeforeStep, fallSpeedBeforeStep);
   if (impact) {
     shatterEgg(impact);
     return;
@@ -457,7 +459,7 @@ function noteShotOutcome() {
   }
 }
 
-function strongestObjectImpact(speed) {
+function strongestObjectImpact(speed, fallSpeed) {
   let strongest = null;
 
   eventQueue.drainContactForceEvents((event) => {
@@ -473,6 +475,7 @@ function strongestObjectImpact(speed) {
       forceMagnitude,
       speed,
       playAge,
+      fallSpeed,
     })) return;
 
     if (!strongest || forceMagnitude > strongest.forceMagnitude) {
@@ -481,6 +484,7 @@ function strongestObjectImpact(speed) {
         colliderKind,
         forceMagnitude,
         speed,
+        fallSpeed,
         direction: { x: direction.x, y: direction.y, z: direction.z },
       };
     }
@@ -641,6 +645,7 @@ function shatterEgg(impact) {
   breakState.age = 0;
   breakState.resultShown = false;
   breakState.distanceRemaining = Math.max(0, currentStage().length - position.z);
+  breakState.byLanding = impact.colliderKind === "floor";
   breakState.position.set(position.x, position.y, position.z);
 
   shellMesh.visible = false;
@@ -853,8 +858,10 @@ function showShatterResult() {
   mode = "lost";
   resultKicker.textContent =
     `${currentStage().name}　この先 ${breakState.distanceRemaining.toFixed(1)} m`;
-  resultTitle.textContent = "割れた。";
-  resultMessage.textContent = "厨房は、止まらない。";
+  resultTitle.textContent = breakState.byLanding ? "跳ねすぎた。" : "割れた。";
+  resultMessage.textContent = breakState.byLanding
+    ? "殻は、落ちてきた自分の重さに耐えない。"
+    : "厨房は、止まらない。";
   stageBrief.textContent = "";
   retryButton.textContent = "次の卵";
   result.classList.remove("is-stage-clear");

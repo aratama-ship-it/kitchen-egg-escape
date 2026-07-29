@@ -4,14 +4,22 @@ export const OBJECT_IMPACT_FORCE_THRESHOLD = 1.15 / 3;
 export const OBJECT_IMPACT_SPEED_THRESHOLD = 0.14 / Math.sqrt(3);
 export const IMPACT_GRACE_SECONDS = 0.45;
 
+// 床へ落ちてきた速さがこれを超えると割れる。実測では、普通に撞いて転がるあいだの
+// 落下速度は0.29 m/s、速い連打でも0.67 m/sどまり。連打で跳ね続けて無理やり
+// 直進する打ち方だけがこの値を大きく超える。
+export const LANDING_BREAK_SPEED = 1;
+
 export function shouldShatter({
   colliderKind,
   forceMagnitude,
   speed,
   playAge,
+  fallSpeed = 0,
 }) {
-  if (colliderKind === "floor" || colliderKind === "unknown") return false;
+  if (colliderKind === "unknown") return false;
   if (playAge < IMPACT_GRACE_SECONDS) return false;
+  // 床は転がっているあいだずっと触れているので、落ちてきた速さだけを見る。
+  if (colliderKind === "floor") return fallSpeed >= LANDING_BREAK_SPEED;
   return (
     forceMagnitude >= OBJECT_IMPACT_FORCE_THRESHOLD &&
     speed >= OBJECT_IMPACT_SPEED_THRESHOLD
