@@ -67,6 +67,10 @@ const MAX_STEPS_PER_FRAME = 40;
 const SHOT_COOLDOWN = 0.28;
 // 猫に弾かれて得る速度の上限。これ以上は卵が跳ねて飛んでしまう。
 const CAT_MAX_SPEED_CHANGE = 1.8;
+// 弾かれる向きのばらつき（猫と反対側を軸にした扇の広さ）。
+const CAT_PUSH_SPREAD = 2.2;
+// 払ったあと前足が引っ込むまでの時間。
+const CAT_PAW_RETREAT = 0.42;
 // 指を滑らせた距離がこの画素数で最大の力になる。
 const AIM_FULL_PULL = 132;
 const AIM_DEAD_ZONE = 10;
@@ -188,6 +192,71 @@ aimMesh.rotation.x = -Math.PI / 2;
 aimMesh.renderOrder = 4;
 aimMesh.visible = false;
 scene.add(aimMesh);
+
+// 猫は姿が見えてこそ愛嬌になる。前足だけを、来る側から差し入れる。
+const pawGroup = new THREE.Group();
+pawGroup.visible = false;
+scene.add(pawGroup);
+
+const pawFurMaterial = new THREE.MeshStandardMaterial({
+  color: 0x3b3733,
+  roughness: 0.85,
+  metalness: 0,
+});
+const pawPadMaterial = new THREE.MeshStandardMaterial({
+  color: 0xc98a86,
+  roughness: 0.6,
+  metalness: 0,
+});
+
+const pawLeg = new THREE.Mesh(
+  new THREE.CylinderGeometry(0.036, 0.042, 0.42, 14),
+  pawFurMaterial
+);
+pawLeg.position.y = 0.24;
+pawLeg.castShadow = true;
+pawGroup.add(pawLeg);
+
+const pawBall = new THREE.Mesh(
+  new THREE.SphereGeometry(0.052, 18, 14),
+  pawFurMaterial
+);
+pawBall.scale.set(1, 0.82, 1.1);
+pawBall.castShadow = true;
+pawGroup.add(pawBall);
+
+for (let index = 0; index < 3; index += 1) {
+  const toe = new THREE.Mesh(
+    new THREE.SphereGeometry(0.019, 12, 10),
+    pawFurMaterial
+  );
+  toe.position.set((index - 1) * 0.033, -0.006, 0.048);
+  toe.castShadow = true;
+  pawGroup.add(toe);
+}
+
+const pawPad = new THREE.Mesh(
+  new THREE.SphereGeometry(0.026, 14, 10),
+  pawPadMaterial
+);
+pawPad.scale.set(1.1, 0.5, 0.9);
+pawPad.position.set(0, -0.034, 0.012);
+pawGroup.add(pawPad);
+
+// 床の影が「どこへ手が降りてくるか」を伝える。
+const pawShadow = new THREE.Mesh(
+  new THREE.CircleGeometry(1, 28),
+  new THREE.MeshBasicMaterial({
+    color: 0x0a0d0c,
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+  })
+);
+pawShadow.rotation.x = -Math.PI / 2;
+pawShadow.renderOrder = 3;
+pawShadow.visible = false;
+scene.add(pawShadow);
 
 // 動かしているのは黄身なので、それが見えないと何をしているのか分からない。
 // 殻を薄い磁器のように透かし、中の白身と黄身を主役として見せる。
@@ -381,10 +450,15 @@ function updateCat() {
     return;
   }
 
+
   // 弾かれる向きは決まっていない。理不尽さはここに置く。
-  const angle = mulberry32(
+  // 前足は猫のいる側から入る。弾かれる向きはその反対を軸に散らす。
+  // どこへ飛ぶかは読めないが、どちらから来るかは見えている。
+  const spread = mulberry32(
     Math.round(stageTime * 1000) + stageIndex * 977
-  )() * Math.PI * 2;
+  )();
+  const base = cat.side > 0 ? Math.PI : 0;
+  const angle = base + (spread - 0.5) * CAT_PUSH_SPREAD;
   // 質量は倍率の3乗で増えるので、同じだけ動かすには3.5乗で掛ける
   // （速度は√倍率で揃う）。2乗ではダチョウの卵がびくともしなかった。
   // ただし与える速度には上限を置く。これを超えると卵が飛んで計算が荒れる。
@@ -627,6 +701,7 @@ function frameBody(time) {
 
   syncEggVisual();
   updateAimIndicator();
+  updatePaw();
   updateCamera(elapsed);
   if (time - lastHudUpdate > 80) {
     updateHud();
@@ -651,6 +726,46 @@ function syncEggVisual() {
 }
 
 // 指を滑らせた量がそのまま床の帯の長さになる。撞く前に飛距離の見当がつく。
+// 予告のあいだに降りてきて、一撃で払い、すっと引き上げる。
+function updatePaw() {
+  const stage = currentStage();
+  const showing = Boolean(stage.cat)
+    && (cat.warning || cat.swipeAge < CAT_PAW_RETREAT);
+  pawGroup.visible = showing;
+  pawShadow.visible = showing;
+  if (!showing) return;
+
+  const position = breakState.active ? breakState.position : eggBody.translation();
+  // 縦画面ではカメラの横の視野が片側14度ほどしかない。卵から0.38m先で
+  // 枠に収まるのは0.098mまでなので、前足は卵のすぐ脇へ差し入れる。
+  const reach = 0.075 * egg.scale;
+  const side = cat.side;
+
+  let descent = 0;
+  let across = 1;
+  if (cat.swipeAge < CAT_PAW_RETREAT) {
+    // 払った直後。手前へ抜けながら持ち上がる。
+    const t = cat.swipeAge / CAT_PAW_RETREAT;
+    descent = 1 - t * t;
+    across = 1 - t * 2.4;
+  } else {
+    // 予告のあいだ。じりじり降りてくる。
+    const remaining = Math.max(0, cat.nextAt - stageTime);
+    descent = 1 - THREE.MathUtils.clamp(remaining / CAT_WARNING_SECONDS, 0, 1);
+  }
+
+  const x = position.x + side * reach * across;
+  const height = THREE.MathUtils.lerp(0.34, 0.075, descent) * egg.scale;
+  pawGroup.position.set(x, height, position.z + 0.04 * egg.scale);
+  pawGroup.scale.setScalar(egg.scale * 0.62);
+  pawGroup.rotation.z = -side * 0.45;
+
+  pawShadow.position.set(x, 0.003, position.z + 0.04 * egg.scale);
+  const shadowSize = THREE.MathUtils.lerp(0.16, 0.075, descent) * egg.scale;
+  pawShadow.scale.setScalar(shadowSize);
+  pawShadow.material.opacity = 0.12 + descent * 0.4;
+}
+
 function updateAimIndicator() {
   const showing = aim.active && aim.power > 0 && mode === "playing";
   aimMesh.visible = showing;
@@ -1477,6 +1592,11 @@ window.addEventListener("keydown", (event) => {
     restartStage();
     return;
   }
+  if (import.meta.env.DEV && event.code === "KeyC" && mode === "playing") {
+    event.preventDefault();
+    if (currentStage().cat) cat.nextAt = stageTime + CAT_WARNING_SECONDS;
+    return;
+  }
   if (import.meta.env.DEV && event.code === "KeyN" && mode === "playing") {
     event.preventDefault();
     clearStage();
@@ -1512,6 +1632,9 @@ window.__EGG_ESCAPE_TEST__ = {
     stageCount: STAGES.length,
     clearedCount,
     shotsTaken,
+    catWarning: cat.warning,
+    catSide: cat.side,
+    pawVisible: pawGroup.visible,
     aimPower: aim.power,
     position: { ...eggBody.translation() },
     rotation: { ...eggBody.rotation() },
