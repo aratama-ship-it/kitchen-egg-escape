@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  CAT_STRIKE_RADIUS,
+  CAT_WARNING_SECONDS,
   EGG_CLEARANCE,
   EGG_WIDTH,
   STAGES,
@@ -51,6 +53,14 @@ test("stages with a cat use an egg the cat strength was measured against", () =>
     assert.ok(stage.cat.strength > 0.08, `${stage.id}: 猫が弱すぎる`);
     assert.ok(stage.cat.strength < 0.16, `${stage.id}: 猫が強すぎて卵が飛ぶ`);
   }
+});
+
+// 前足の届く範囲は、全力の一打(0.37m)では逃げ切れて、
+// 弱い一打(0.16m)では逃げ切れない幅に置いてある。実測で決めた値。
+test("the cat can be dodged by committing a real shot", () => {
+  assert.ok(CAT_STRIKE_RADIUS > 0.16, "弱い一打でも避けられてしまう");
+  assert.ok(CAT_STRIKE_RADIUS < 0.37, "全力で撞いても避けられない");
+  assert.ok(CAT_WARNING_SECONDS > 1.2, "気づいて撞くには予告が短すぎる");
 });
 
 test("the standard egg is the chicken one", () => {

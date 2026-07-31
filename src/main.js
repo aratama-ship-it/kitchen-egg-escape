@@ -23,6 +23,7 @@ import {
   shouldShatter,
 } from "./impact-model.js";
 import {
+  CAT_STRIKE_RADIUS,
   CAT_WARNING_SECONDS,
   STAGES,
   SURFACE_FRICTION,
@@ -71,6 +72,7 @@ const CAT_MAX_SPEED_CHANGE = 1.8;
 const CAT_PUSH_SPREAD = 2.2;
 // 払ったあと前足が引っ込むまでの時間。
 const CAT_PAW_RETREAT = 0.42;
+
 // 指を滑らせた距離がこの画素数で最大の力になる。
 const AIM_FULL_PULL = 132;
 const AIM_DEAD_ZONE = 10;
@@ -103,7 +105,16 @@ let progressMark = 0;
 let settledNoted = true;
 let cameraFraming = 0;
 // 猫はときどき前足を入れてくる。理不尽だが、隙間にいるあいだは届かない。
-const cat = { nextAt: Infinity, warning: false, swipeAge: Infinity, side: 1 };
+const cat = {
+  nextAt: Infinity,
+  warning: false,
+  swipeAge: Infinity,
+  side: 1,
+  // 予告した瞬間の卵の位置。前足はここへ降りる。動けば外れる。
+  targetX: 0,
+  targetZ: 0,
+  missed: false,
+};
 
 // 狙い。撞く向き（進みたい向き）と、引いた量から決まる力。
 const aim = {
@@ -436,6 +447,8 @@ function updateCat() {
     cat.warning = true;
     const position = eggBody.translation();
     cat.side = position.x >= 0 ? 1 : -1;
+    cat.targetX = position.x;
+    cat.targetZ = position.z;
     playCatSound();
   }
 
@@ -445,10 +458,24 @@ function updateCat() {
   cat.swipeAge = 0;
 
   const position = eggBody.translation();
-  if (isSheltered(stage, position.x, position.z)) {
-    srStatus.textContent = "猫の前足が届かなかった。";
+  const awayFromTarget = Math.hypot(
+    position.x - cat.targetX,
+    position.z - cat.targetZ
+  );
+
+  // 狙われた場所から離れていれば空振りする。隙間にいても届かない。
+  if (
+    awayFromTarget > CAT_STRIKE_RADIUS * egg.scale
+    || isSheltered(stage, position.x, position.z)
+  ) {
+    cat.missed = true;
+    catHint.classList.remove("is-visible");
+    catHint.classList.add("is-safe");
+    catHint.firstElementChild.textContent = "かわした";
+    srStatus.textContent = "猫の前足をかわした。";
     return;
   }
+  cat.missed = false;
 
 
   // 弾かれる向きは決まっていない。理不尽さはここに置く。
@@ -735,9 +762,11 @@ function updatePaw() {
   pawShadow.visible = showing;
   if (!showing) return;
 
-  const position = breakState.active ? breakState.position : eggBody.translation();
+  // 狙われた場所へ降りる。卵を追いかけないから、動けば外せる。
+  const targetX = cat.targetX;
+  const targetZ = cat.targetZ;
   // 縦画面ではカメラの横の視野が片側14度ほどしかない。卵から0.38m先で
-  // 枠に収まるのは0.098mまでなので、前足は卵のすぐ脇へ差し入れる。
+  // 枠に収まるのは0.098mまでなので、前足は狙いのすぐ脇へ差し入れる。
   const reach = 0.075 * egg.scale;
   const side = cat.side;
 
@@ -754,16 +783,16 @@ function updatePaw() {
     descent = 1 - THREE.MathUtils.clamp(remaining / CAT_WARNING_SECONDS, 0, 1);
   }
 
-  const x = position.x + side * reach * across;
+  const x = targetX + side * reach * across;
   const height = THREE.MathUtils.lerp(0.34, 0.075, descent) * egg.scale;
-  pawGroup.position.set(x, height, position.z + 0.04 * egg.scale);
+  pawGroup.position.set(x, height, targetZ + 0.04 * egg.scale);
   pawGroup.scale.setScalar(egg.scale * 0.62);
   pawGroup.rotation.z = -side * 0.45;
 
-  pawShadow.position.set(x, 0.003, position.z + 0.04 * egg.scale);
-  const shadowSize = THREE.MathUtils.lerp(0.16, 0.075, descent) * egg.scale;
-  pawShadow.scale.setScalar(shadowSize);
-  pawShadow.material.opacity = 0.12 + descent * 0.4;
+  pawShadow.position.set(targetX, 0.003, targetZ);
+  // 影は狙われた範囲そのもの。ここから出れば当たらない、と形で伝える。
+  pawShadow.scale.setScalar(CAT_STRIKE_RADIUS * egg.scale);
+  pawShadow.material.opacity = 0.14 + descent * 0.34;
 }
 
 function updateAimIndicator() {
@@ -828,7 +857,7 @@ function updateCamera(dt) {
   ) * zoom;
 
   const targetPosition = new THREE.Vector3(
-    position.x * 0.82 + Math.sin(breakState.age * 128) * shake,
+    position.x + Math.sin(breakState.age * 128) * shake,
     Math.max(0.105 * egg.scale, position.y + height),
     position.z - back + Math.cos(breakState.age * 91) * shake * 0.45
   );
@@ -1242,7 +1271,7 @@ function updateHud() {
   if (catComing) {
     catHint.firstElementChild.textContent = sheltered
       ? "隙間にいる。前足は届かない"
-      : "猫が来る。隙間へ逃げる";
+      : "狙われている。その場から動く";
   }
   distanceLabel.textContent =
     `この区画の残り ${Math.max(0, stage.length - position.z).toFixed(1)} m　／　${surface}`;

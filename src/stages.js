@@ -19,7 +19,12 @@ export const WORLD_GRAVITY = 9.81 / WORLD_SCALE;
 
 // 猫はときどき現れて、卵を不規則な向きへ弾く。理不尽だが、逃げ場はある。
 // shelter（隙間）の中にいるあいだは前足が届かない。
-export const CAT_WARNING_SECONDS = 1.1;
+// 予告から前足が降りるまで。人が気づいて狙って撞くには1秒では足りない。
+export const CAT_WARNING_SECONDS = 1.6;
+
+// 前足が届く範囲。予告のあいだにここから出れば空振りする。
+// 全力の一打なら0.37m動けて逃げ切れ、弱い一打の0.16mでは届かない。
+export const CAT_STRIKE_RADIUS = 0.19;
 
 export function shelterAt(stage, x, z) {
   for (const shelter of stage.shelters ?? []) {
