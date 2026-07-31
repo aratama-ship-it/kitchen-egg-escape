@@ -397,6 +397,53 @@ export const STAGES = [
     },
   },
   {
+    id: "pipe-run",
+    egg: "chicken",
+    name: "配管の裏",
+    subtitle: "BEHIND THE PIPES",
+    brief: "細い。そして先が見えない。壁は交互に寄ってくる。一打ぶん先までしか分からない。",
+    length: 4.4,
+    // 標準(1.15)の6割。低い視点では両側の壁が画面を挟む。
+    halfWidth: 0.7,
+    bank: 0,
+    atmosphere: {
+      fog: 0x161c1e,
+      key: 0x9fb4c0,
+      keyStrength: 0.9,
+      ambient: 0x36434a,
+      ambientStrength: 0.72,
+      // 一打ぶんの先までしか見えない。次の壁は見えるが、その次は闇。
+      near: 0.18,
+      far: 1.5,
+      eggLight: 0.5,
+    },
+    floor: [{ toZ: 4.4, surface: "dry" }],
+    props: [
+      // 交互に張り出す仕切り。行き止まりは作らない（一打は前方限定のため、
+      // 引き返しが要る構造は詰みになる）。必ず片側が空いている。
+      // 幅0.52・間隔1.2mで、寄せ替えに一打ぶんの余裕を残す。
+      // 細さは通路の幅（片側0.55m）で出し、仕切りで詰まらせない。
+      // 壁ぎわから0.5mだけ張り出す。残る0.9mが通り道で、
+      // 寄せ替えは0.5mを1.2mかけて行えばよい（一打0.38mなので二打ぶん）。
+      { kind: "baffle", look: "darkMetal", x: -0.45, z: 1.05, width: 0.5, depth: 0.1, height: 0.3 },
+      { kind: "baffle", look: "darkMetal", x: 0.45, z: 2.25, width: 0.5, depth: 0.1, height: 0.3 },
+      { kind: "baffle", look: "darkMetal", x: -0.45, z: 3.45, width: 0.5, depth: 0.1, height: 0.3 },
+      // 縦に走る配管。低いので視界は塞がず、寄せ替えの通り道からも外してある。
+      { kind: "pipe", look: "steel", shape: "cylinder", x: 0.6, z: 1.7, radius: 0.045, height: 0.12 },
+      { kind: "pipe", look: "steel", shape: "cylinder", x: -0.6, z: 2.9, radius: 0.045, height: 0.12 },
+    ],
+    movers: [],
+    cat: { firstAt: 6, every: 7, strength: 0.1 },
+    shelters: [
+      { fromX: 0.24, toX: 0.68, fromZ: 1.22, toZ: 1.64, label: "仕切りの陰" },
+      { fromX: -0.68, toX: -0.24, fromZ: 2.42, toZ: 2.84, label: "配管の陰" },
+    ],
+    clear: {
+      title: "細いところを抜けた。",
+      message: "見えないまま、通れた。",
+    },
+  },
+  {
     id: "back-door",
     egg: "chicken",
     name: "裏口",

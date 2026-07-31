@@ -191,6 +191,13 @@ keyLight.shadow.camera.near = 0.1;
 keyLight.shadow.camera.far = 9;
 scene.add(keyLight);
 
+// 卵についてまわる小さな明かり。暗い区画でだけ点く。
+// 逆二乗で落とすと、床のすぐ上に置いた明かりが真下だけ白飛びする。
+// 減衰を緩めて高い位置から吊るし、pool状に広く弱く照らす。
+const eggLight = new THREE.PointLight(0xffc98f, 0, 1.6, 1);
+eggLight.visible = false;
+scene.add(eggLight);
+
 const world = new RAPIER.World({ x: 0, y: -WORLD_GRAVITY, z: 0 });
 world.timestep = FIXED_STEP;
 const eventQueue = new RAPIER.EventQueue(true);
@@ -408,8 +415,16 @@ function applyAtmosphere(stage) {
   const fogColor = atmosphere.fog ?? 0x63706b;
   scene.background = new THREE.Color(fogColor);
   scene.fog.color = new THREE.Color(fogColor);
+  // 霧の届く距離が、そのまま「どこまで見えるか」になる。
+  scene.fog.near = atmosphere.near ?? 2.4;
+  scene.fog.far = atmosphere.far ?? 13.5;
   keyLight.color = new THREE.Color(atmosphere.key ?? 0xfff2d0);
+  keyLight.intensity = atmosphere.keyStrength ?? 3.5;
   hemisphere.color = new THREE.Color(atmosphere.ambient ?? 0xdde4dd);
+  hemisphere.intensity = atmosphere.ambientStrength ?? 1.4;
+  // 暗い区画では、透けた殻ごしに黄身の色が足元をわずかに照らす。
+  eggLight.intensity = atmosphere.eggLight ?? 0;
+  eggLight.visible = eggLight.intensity > 0;
 }
 
 function placeEggAtStart() {
@@ -825,6 +840,10 @@ function syncEggVisual() {
     yolkState.position.z
   );
   albumenMesh.position.lerp(yolkMesh.position, 0.18);
+  if (eggLight.visible) {
+    const lit = breakState.active ? breakState.position : eggBody.translation();
+    eggLight.position.set(lit.x, lit.y + 0.22 * egg.scale, lit.z);
+  }
   yolkMaterial.emissiveIntensity = aim.active ? 0.5 + aim.power * 0.5 : 0.28;
 }
 
