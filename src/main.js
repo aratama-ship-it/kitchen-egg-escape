@@ -73,7 +73,7 @@ const CAT_MAX_SPEED_CHANGE = 1.8;
 // 弾かれる向きのばらつき（猫と反対側を軸にした扇の広さ）。
 const CAT_PUSH_SPREAD = 2.2;
 // 払ったあと前足が引っ込むまでの時間。
-const CAT_PAW_RETREAT = 0.42;
+const CAT_PAW_RETREAT = 0.28;
 
 // 指を滑らせた距離がこの画素数で最大の力になる。
 const AIM_FULL_PULL = 132;

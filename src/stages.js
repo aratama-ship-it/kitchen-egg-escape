@@ -19,8 +19,9 @@ export const WORLD_GRAVITY = 9.81 / WORLD_SCALE;
 
 // 猫はときどき現れて、卵を不規則な向きへ弾く。理不尽だが、逃げ場はある。
 // shelter（隙間）の中にいるあいだは前足が届かない。
-// 予告から前足が降りるまで。人が気づいて狙って撞くには1秒では足りない。
-export const CAT_WARNING_SECONDS = 1.6;
+// 予告から前足が降りるまで。実測では全力の一打で1.1秒あれば0.37m動けて
+// 範囲(0.19m)を抜けられる。かわせる限界は割らずに、考える猶予だけを削る。
+export const CAT_WARNING_SECONDS = 1.15;
 
 // 前足が届く範囲。予告のあいだにここから出れば空振りする。
 // 全力の一打なら0.37m動けて逃げ切れ、弱い一打の0.16mでは届かない。
@@ -235,7 +236,7 @@ export const STAGES = [
     ],
     movers: [],
     // 洗い場ではじめて猫が出る。流し台の脚の奥が逃げ場になる。
-    cat: { firstAt: 9, every: 11, strength: 0.1 },
+    cat: { firstAt: 8, every: 7.5, strength: 0.1 },
     shelters: [
       { fromX: -1.15, toX: -0.72, fromZ: 1.6, toZ: 2.4, label: "流し台の下" },
       { fromX: 0.72, toX: 1.15, fromZ: 2.7, toZ: 3.5, label: "洗い桶の陰" },
@@ -283,7 +284,7 @@ export const STAGES = [
         phase: -Math.PI / 2,
       },
     ],
-    cat: { firstAt: 7, every: 9, strength: 0.11 },
+    cat: { firstAt: 6, every: 6.5, strength: 0.11 },
     shelters: [
       { fromX: -1.15, toX: -0.78, fromZ: 2.2, toZ: 3.1, label: "台車の陰" },
       { fromX: 0.78, toX: 1.15, fromZ: 2.2, toZ: 3.1, label: "壁ぎわ" },
@@ -306,15 +307,20 @@ export const STAGES = [
     floor: [{ toZ: 4.6, surface: "dry" }],
     props: [...counterLegs([1.2, 3.4])],
     movers: [],
+    cat: { firstAt: 7, every: 8, strength: 0.1 },
+    shelters: [
+      { fromX: -1.15, toX: -0.9, fromZ: 1.5, toZ: 2.4, label: "壁ぎわの荷物の陰" },
+      { fromX: 0.9, toX: 1.15, fromZ: 2.7, toZ: 3.6, label: "ワゴンの下" },
+    ],
     walkers: [
       {
         id: "server-a",
         x: 0.44,
         fromZ: 0.8,
         toZ: 3.8,
-        speed: 0.34,
+        speed: 0.42,
         stride: 0.44,
-        stepTime: 0.52,
+        stepTime: 0.46,
         liftHeight: 0.17,
       },
       {
@@ -322,9 +328,9 @@ export const STAGES = [
         x: -0.64,
         fromZ: 1.3,
         toZ: 4.2,
-        speed: 0.27,
+        speed: 0.34,
         stride: 0.4,
-        stepTime: 0.58,
+        stepTime: 0.5,
         liftHeight: 0.15,
         phase: 2.3,
       },
@@ -381,7 +387,7 @@ export const STAGES = [
       },
     ],
     movers: [],
-    cat: { firstAt: 6, every: 8, strength: 0.11 },
+    cat: { firstAt: 5.5, every: 6, strength: 0.11 },
     shelters: [
       { fromX: 0.7, toX: 1.15, fromZ: 1.8, toZ: 2.8, label: "冷蔵庫の隙間" },
     ],
@@ -429,7 +435,7 @@ export const STAGES = [
       },
     ],
     movers: [],
-    cat: { firstAt: 5, every: 7, strength: 0.1 },
+    cat: { firstAt: 4.5, every: 5.5, strength: 0.1 },
     shelters: [
       { fromX: -1.15, toX: -0.75, fromZ: 1.0, toZ: 1.9, label: "扉のくぼみ" },
       { fromX: 0.75, toX: 1.15, fromZ: 1.0, toZ: 1.9, label: "壁のくぼみ" },
