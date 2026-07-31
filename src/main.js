@@ -30,6 +30,8 @@ import {
   WORLD_GRAVITY,
   draftForceAt,
   isSheltered,
+  moverCenterX,
+  walkerFeetAt,
   stageStartPosition,
   stageStartRotation,
   surfaceAt,
@@ -105,6 +107,11 @@ let progressMark = 0;
 let settledNoted = true;
 let cameraFraming = 0;
 // 猫はときどき前足を入れてくる。理不尽だが、隙間にいるあいだは届かない。
+// 行き交う足。前の1ステップと比べて「降りてくる途中か」を判定に使う。
+let currentFeet = [];
+let previousFeet = [];
+const plantedFeet = new Set();
+
 const cat = {
   nextAt: Infinity,
   warning: false,
@@ -147,6 +154,7 @@ const breakState = {
   albumen: null,
   yolk: null,
   byLanding: false,
+  byStomp: false,
 };
 
 const renderer = new THREE.WebGLRenderer({
@@ -390,6 +398,9 @@ function loadStage(index) {
   cat.nextAt = currentStage().cat ? currentStage().cat.firstAt : Infinity;
   cat.warning = false;
   cat.swipeAge = Infinity;
+  currentFeet = [];
+  previousFeet = [];
+  plantedFeet.clear();
 }
 
 function applyAtmosphere(stage) {
@@ -503,6 +514,34 @@ function updateCat() {
   srStatus.textContent = "猫に弾かれました。";
 }
 
+function updateFeet() {
+  const stage = currentStage();
+  if (!stage.walkers) {
+    if (currentFeet.length) { currentFeet = []; previousFeet = []; plantedFeet.clear(); }
+    return;
+  }
+  previousFeet = currentFeet;
+  currentFeet = walkerFeetAt(stage, stageTime);
+
+  const position = eggBody.translation();
+  currentFeet.forEach((foot, index) => {
+    if (foot.planted && !plantedFeet.has(index)) {
+      plantedFeet.add(index);
+      playStepSound(Math.hypot(foot.x - position.x, foot.z - position.z));
+    } else if (!foot.planted) {
+      plantedFeet.delete(index);
+    }
+  });
+}
+
+// この靴はいま降りてくる途中か。踏みつけ（速度によらず割れる）の判定に使う。
+function footIsLanding(footIndex) {
+  const now = currentFeet[footIndex];
+  const before = previousFeet[footIndex];
+  if (!now || !before) return false;
+  return now.lift < 0.05 && now.lift < before.lift;
+}
+
 function isEggSettled() {
   const velocity = eggBody.linvel();
   return Math.hypot(velocity.x, velocity.y, velocity.z) < 0.03;
@@ -571,6 +610,7 @@ function physicsStep() {
   stageHandle.update(stageTime);
   shotCooldown = Math.max(0, shotCooldown - FIXED_STEP);
   updateCat();
+  updateFeet();
   if (shotCooldown === 0 && shotsTaken > 0 && !aim.active && isEggSettled()) {
     if (!settledNoted) {
       settledNoted = true;
@@ -613,7 +653,11 @@ function physicsStep() {
   const fallSpeedBeforeStep = Math.max(0, -velocityBeforeStep.y);
   world.step(eventQueue);
 
-  const impact = strongestObjectImpact(speedBeforeStep, fallSpeedBeforeStep);
+  const impact = strongestObjectImpact(
+    speedBeforeStep,
+    fallSpeedBeforeStep,
+    velocityBeforeStep
+  );
   if (impact) {
     shatterEgg(impact);
     return;
@@ -646,7 +690,7 @@ function noteShotOutcome() {
   }
 }
 
-function strongestObjectImpact(speed, fallSpeed) {
+function strongestObjectImpact(speed, fallSpeed, velocity) {
   let strongest = null;
 
   eventQueue.drainContactForceEvents((event) => {
@@ -655,7 +699,39 @@ function strongestObjectImpact(speed, fallSpeed) {
     if (first !== eggCollider.handle && second !== eggCollider.handle) return;
 
     const otherHandle = first === eggCollider.handle ? second : first;
-    const colliderKind = stageHandle.kinds.get(otherHandle) ?? "unknown";
+    let colliderKind = stageHandle.kinds.get(otherHandle) ?? "unknown";
+    if (colliderKind === "cart") {
+      // カートに小突かれて加速した速度で「突っ込んだ」ことにしない。
+      // 靴と同じで、割れるのは自分からぶつかりに行ったときだけ。
+      const position = eggBody.translation();
+      const cart = currentStage().movers.reduce((nearest, mover) => {
+        const distance = Math.abs(mover.z - position.z);
+        return !nearest || distance < nearest.distance
+          ? { mover, distance }
+          : nearest;
+      }, null);
+      if (cart) {
+        const cartX = moverCenterX(cart.mover, stageTime);
+        const toward = velocity.x * (cartX - position.x)
+          + velocity.z * (cart.mover.z - position.z);
+        if (toward <= 0) return;
+      }
+    }
+    if (colliderKind === "shoe") {
+      const footIndex = stageHandle.footIndexFor(otherHandle);
+      if (footIndex !== undefined && footIsLanding(footIndex)) {
+        colliderKind = "shoe-stomp";
+      } else if (footIndex !== undefined) {
+        // 歩いてきた靴に押されているだけなら割れない。押された卵は靴から
+        // 離れる向きへ加速するので、その速度で「突っ込んだ」ことにしない。
+        const foot = currentFeet[footIndex];
+        const position = eggBody.translation();
+        const toward = foot
+          ? velocity.x * (foot.x - position.x) + velocity.z * (foot.z - position.z)
+          : 1;
+        if (toward <= 0) return;
+      }
+    }
     const forceMagnitude = event.totalForceMagnitude();
     if (!shouldShatter({
       colliderKind,
@@ -886,6 +962,7 @@ function shatterEgg(impact) {
   breakState.resultShown = false;
   breakState.distanceRemaining = Math.max(0, currentStage().length - position.z);
   breakState.byLanding = impact.colliderKind === "floor";
+  breakState.byStomp = impact.colliderKind === "shoe-stomp";
   breakState.position.set(position.x, position.y, position.z);
 
   shellMesh.visible = false;
@@ -1098,10 +1175,14 @@ function showShatterResult() {
   mode = "lost";
   resultKicker.textContent =
     `${currentStage().name}　この先 ${breakState.distanceRemaining.toFixed(1)} m`;
-  resultTitle.textContent = breakState.byLanding ? "跳ねすぎた。" : "割れた。";
-  resultMessage.textContent = breakState.byLanding
-    ? "殻は、落ちてきた自分の重さに耐えない。"
-    : "厨房は、止まらない。";
+  resultTitle.textContent = breakState.byStomp
+    ? "踏まれた。"
+    : breakState.byLanding ? "跳ねすぎた。" : "割れた。";
+  resultMessage.textContent = breakState.byStomp
+    ? "誰も、床の卵には気づかない。"
+    : breakState.byLanding
+      ? "殻は、落ちてきた自分の重さに耐えない。"
+      : "厨房は、止まらない。";
   stageBrief.textContent = "";
   retryButton.textContent = "次の卵";
   result.classList.remove("is-stage-clear");
@@ -1204,6 +1285,25 @@ function playCatSound() {
   oscillator.connect(filter).connect(gain).connect(context.destination);
   oscillator.start(now);
   oscillator.stop(now + 0.62);
+}
+
+// 靴が床へ降りた音。近いほど大きく、遠いと床越しの気配になる。
+function playStepSound(distance) {
+  const context = ensureAudioContext();
+  if (!context) return;
+  const now = context.currentTime;
+  const gainValue = Math.min(0.07, 0.09 / (1 + distance * 2.6));
+  if (gainValue < 0.008) return;
+  const thud = context.createOscillator();
+  thud.type = "sine";
+  thud.frequency.setValueAtTime(64, now);
+  thud.frequency.exponentialRampToValueAtTime(38, now + 0.11);
+  const gain = context.createGain();
+  gain.gain.setValueAtTime(gainValue, now);
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.16);
+  thud.connect(gain).connect(context.destination);
+  thud.start(now);
+  thud.stop(now + 0.17);
 }
 
 // 撞いた瞬間の音。強さで高さと長さが変わる、短い打撃音。

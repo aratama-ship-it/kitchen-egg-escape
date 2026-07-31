@@ -49,6 +49,68 @@ export function catStrikeTimes(stage, until) {
   return times;
 }
 
+// 厨房を行き交う人。床すれすれの視点では、巨大な靴が交互に降りてくる森になる。
+// 足の位置は時刻から決定的に出す（描画・剛体・通過検証がすべて同じ計算を使う）。
+export const SHOE = { width: 0.11, depth: 0.3, height: 0.075 };
+const FOOT_SIDE = 0.09;
+
+// 通路をfromZ〜toZで往復する位置。三角波。
+export function walkerPathZ(walker, time) {
+  const length = walker.toZ - walker.fromZ;
+  const period = (2 * length) / walker.speed;
+  const phase = (((time + (walker.phase ?? 0)) % period) + period) % period;
+  const travelled = phase * walker.speed;
+  return travelled <= length
+    ? walker.fromZ + travelled
+    : walker.toZ - (travelled - length);
+}
+
+export function walkerDirection(walker, time) {
+  return walkerPathZ(walker, time + 0.01) >= walkerPathZ(walker, time) ? 1 : -1;
+}
+
+// 両足の状態。片方が接地しているあいだに、もう片方が次の一歩へ振り出す。
+export function walkerFeetAt(stage, time) {
+  const feet = [];
+  for (const walker of stage.walkers ?? []) {
+    for (let index = 0; index < 2; index += 1) {
+      const stepTime = walker.stepTime;
+      const cycle = stepTime * 2;
+      const offset = index * stepTime;
+      const k = Math.floor((time - offset) / cycle);
+      const swingStart = k * cycle + offset;
+      const swingEnd = swingStart + stepTime;
+      const landAt = (t) =>
+        walkerPathZ(walker, t) + walkerDirection(walker, t) * walker.stride * 0.5;
+
+      let z;
+      let lift = 0;
+      let progress = 1;
+      let landingZ = null;
+      if (time < swingEnd) {
+        progress = (time - swingStart) / stepTime;
+        const from = landAt(swingStart - stepTime);
+        landingZ = landAt(swingEnd);
+        z = from + (landingZ - from) * progress;
+        lift = Math.sin(Math.PI * progress) * walker.liftHeight;
+      } else {
+        z = landAt(swingEnd);
+      }
+
+      const side = index === 0 ? -1 : 1;
+      feet.push({
+        x: walker.x + side * FOOT_SIDE,
+        z,
+        lift,
+        planted: lift < 0.01,
+        progress,
+        landingZ,
+      });
+    }
+  }
+  return feet;
+}
+
 export const SURFACE_FRICTION = {
   dry: 0.66,
   wet: 0.13,
@@ -229,6 +291,47 @@ export const STAGES = [
     clear: {
       title: "通した。",
       message: "カートは、こちらを見ていない。",
+    },
+  },
+  {
+    id: "dinner-rush",
+    egg: "chicken",
+    name: "配膳ラッシュ",
+    subtitle: "DINNER RUSH",
+    brief: "人が行き交う。降りてくる靴に踏まれたら、それまで。影の濃いところに次の足が来る。",
+    length: 4.6,
+    halfWidth: DEFAULT_HALF_WIDTH,
+    bank: 0,
+    atmosphere: { fog: 0x5d6168, key: 0xf6ecd8, ambient: 0xd9dcd8 },
+    floor: [{ toZ: 4.6, surface: "dry" }],
+    props: [...counterLegs([1.2, 3.4])],
+    movers: [],
+    walkers: [
+      {
+        id: "server-a",
+        x: 0.44,
+        fromZ: 0.8,
+        toZ: 3.8,
+        speed: 0.34,
+        stride: 0.44,
+        stepTime: 0.52,
+        liftHeight: 0.17,
+      },
+      {
+        id: "server-b",
+        x: -0.64,
+        fromZ: 1.3,
+        toZ: 4.2,
+        speed: 0.27,
+        stride: 0.4,
+        stepTime: 0.58,
+        liftHeight: 0.15,
+        phase: 2.3,
+      },
+    ],
+    clear: {
+      title: "足の森を抜けた。",
+      message: "誰も、床の卵には気づいていない。",
     },
   },
   {
@@ -428,6 +531,18 @@ export function blockedSpansAt(stage, z, time = 0) {
     spans.push([centerX - mover.width / 2, centerX + mover.width / 2]);
   }
 
+  // 足は「いま低い位置」だけでなく「次に降りる場所」も塞いでいる扱いにする。
+  // 振り上げ中の足は床の影が着地点を示しており、そこへ入るのは踏まれに行くこと。
+  for (const foot of walkerFeetAt(stage, time)) {
+    const spots = [];
+    if (foot.lift <= 0.08) spots.push(foot.z);
+    if (foot.landingZ !== null) spots.push(foot.landingZ);
+    for (const spotZ of spots) {
+      if (Math.abs(z - spotZ) > SHOE.depth / 2) continue;
+      spans.push([foot.x - SHOE.width / 2 - 0.02, foot.x + SHOE.width / 2 + 0.02]);
+    }
+  }
+
   return spans.sort((a, b) => a[0] - b[0]);
 }
 
@@ -445,9 +560,15 @@ export function widestGapAt(stage, z, time = 0) {
 
 // 動く障害物は位相によって塞ぐ位置が変わるため、
 // 「どこかの時刻で通れる」ことを通過可能とみなす。
-export function bestGapAt(stage, z, samples = 24) {
-  if (stage.movers.length === 0) return widestGapAt(stage, z);
-  const period = Math.max(...stage.movers.map((mover) => mover.period));
+export function bestGapAt(stage, z, samples = 32) {
+  const movers = stage.movers ?? [];
+  const walkers = stage.walkers ?? [];
+  if (movers.length === 0 && walkers.length === 0) return widestGapAt(stage, z);
+  const periods = [
+    ...movers.map((mover) => mover.period),
+    ...walkers.map((walker) => (2 * (walker.toZ - walker.fromZ)) / walker.speed),
+  ];
+  const period = Math.min(Math.max(...periods), 16);
   let best = 0;
   for (let index = 0; index < samples; index += 1) {
     best = Math.max(best, widestGapAt(stage, z, (index / samples) * period));
@@ -590,6 +711,18 @@ export function validateStage(stage) {
   }
   if (stage.cat && (stage.shelters ?? []).length === 0) {
     problems.push(`${stage.id}: 猫がいるのに逃げ場がない`);
+  }
+
+  for (const walker of stage.walkers ?? []) {
+    if (walker.fromZ >= walker.toZ || walker.fromZ < 0 || walker.toZ > stage.length) {
+      problems.push(`${stage.id}: 歩く範囲が区画の外にある`);
+    }
+    if (Math.abs(walker.x) + FOOT_SIDE + SHOE.width / 2 > stage.halfWidth) {
+      problems.push(`${stage.id}: 歩く動線が床の外へはみ出す`);
+    }
+    if (!(walker.speed > 0) || !(walker.stepTime >= 0.3) || !(walker.stride > 0)) {
+      problems.push(`${stage.id}: 歩き方の値がおかしい`);
+    }
   }
 
   for (let z = 0; z <= stage.length + 0.001; z += 0.05) {

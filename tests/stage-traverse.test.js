@@ -24,6 +24,7 @@ import { shouldShatter } from "../src/impact-model.js";
 import { eggProfile } from "../src/egg-types.js";
 import {
   EGG_CLEARANCE,
+  SHOE,
   STAGES,
   SURFACE_FRICTION,
   WORLD_GRAVITY,
@@ -34,6 +35,8 @@ import {
   stageStartPosition,
   stageStartRotation,
   surfaceAt,
+  toWorld,
+  walkerFeetAt,
 } from "../src/stages.js";
 
 
@@ -43,6 +46,13 @@ function gapAiming(stage, options = {}) {
   const { clearance, scale } = eggProfile(stage.egg);
   // 大きい卵ほど一撃で遠くまで行くので、その分だけ先を見る。
   const lookahead = options.lookahead ?? 0.42 * scale;
+  // 人が往復し続ける帯には、足が今どこにあっても近寄らない。
+  // 初見の人でも「人の通り道」は見ればわかる、という前提の知識。
+  const walkerLanes = (stage.walkers ?? []).map((walker) => ({
+    fromZ: walker.fromZ - SHOE.depth,
+    toZ: walker.toZ + SHOE.depth,
+    span: [walker.x - 0.21, walker.x + 0.21],
+  }));
   let committed = null;
   let lastShotZ = null;
   let stuck = 0;
@@ -56,6 +66,9 @@ function gapAiming(stage, options = {}) {
       // 大きい卵は一撃が長く続くので、見る時間も長くとる。
       for (let sample = 0; sample <= 5; sample += 1) {
         spans.push(...blockedSpansAt(stage, z, time + sample * 0.5 * scale));
+      }
+      for (const lane of walkerLanes) {
+        if (z >= lane.fromZ && z <= lane.toZ) spans.push(lane.span);
       }
     }
     spans.sort((a, b) => a[0] - b[0]);
@@ -72,8 +85,13 @@ function gapAiming(stage, options = {}) {
     consider(cursor, stage.halfWidth);
     gaps.sort((a, b) => b.width - a.width);
 
+    // 狙い所には端からの余白を要求する。縁ギリギリを「まだ通れる」と
+    // みなすと、障害物の際に張り付いたまま進んでしまう。
+    const margin = clearance * 0.5 + 0.06;
     const stillOpen = committed === null ? undefined : gaps.find(
-      (gap) => committed >= gap.from && committed <= gap.to && gap.width >= clearance
+      (gap) => committed >= gap.from + margin
+        && committed <= gap.to - margin
+        && gap.width >= clearance
     );
     const chosen = stillOpen ?? gaps[0];
     if (!chosen) return null;
@@ -151,6 +169,25 @@ function rollThroughStage(stage, {
   });
 
   const egg = eggProfile(stage.egg);
+  const footHandleIndex = new Map();
+  const footBodies = walkerFeetAt(stage, 0).map((foot, footIdx) => {
+    const world3 = toWorld(stage, foot.x, SHOE.height / 2 + foot.lift, foot.z);
+    const footBody = world.createRigidBody(
+      RAPIER.RigidBodyDesc
+        .kinematicPositionBased()
+        .setTranslation(world3.x, world3.y, world3.z)
+    );
+    const collider = world.createCollider(
+      RAPIER.ColliderDesc
+        .cuboid(SHOE.width / 2, SHOE.height / 2, SHOE.depth / 2)
+        .setFriction(0.6),
+      footBody
+    );
+    kinds.set(collider.handle, "shoe");
+    footHandleIndex.set(collider.handle, footIdx);
+    return footBody;
+  });
+
   const start = stageStartPosition(stage);
   if (startZ !== null) start.z = startZ;
   const body = world.createRigidBody(
@@ -203,6 +240,13 @@ function rollThroughStage(stage, {
     for (const entry of moverBodies) {
       const shape = moverCollider(stage, entry.mover, playAge);
       entry.body.setNextKinematicTranslation(shape.position);
+    }
+    if (footBodies.length) {
+      walkerFeetAt(stage, playAge).forEach((foot, index) => {
+        footBodies[index].setNextKinematicTranslation(
+          toWorld(stage, foot.x, SHOE.height / 2 + foot.lift, foot.z)
+        );
+      });
     }
 
     const position = body.translation();
@@ -301,6 +345,33 @@ function rollThroughStage(stage, {
       if (first !== eggCollider.handle && second !== eggCollider.handle) return;
       const other = first === eggCollider.handle ? second : first;
       const kind = kinds.get(other) ?? "unknown";
+      if (kind === "cart") {
+        // 本体と同じ「カートに押されているだけなら割れない」判定。
+        const eggPos = body.translation();
+        const nearest = stage.movers.reduce((best, mover) => {
+          const distance = Math.abs(mover.z - eggPos.z);
+          return !best || distance < best.distance ? { mover, distance } : best;
+        }, null);
+        if (nearest) {
+          const cartX = moverCenterX(nearest.mover, playAge);
+          const toward = before.x * (cartX - eggPos.x)
+            + before.z * (nearest.mover.z - eggPos.z);
+          if (toward <= 0) return;
+        }
+      }
+      if (kind === "shoe") {
+        // 本体と同じ「押されているだけなら割れない」判定。
+        const footIdx = footHandleIndex.get(other);
+        const foot = footIdx === undefined
+          ? null
+          : walkerFeetAt(stage, playAge)[footIdx];
+        if (foot) {
+          const eggPos = body.translation();
+          const toward = before.x * (foot.x - eggPos.x)
+            + before.z * (foot.z - eggPos.z);
+          if (toward <= 0) return;
+        }
+      }
       if (shouldShatter({
         colliderKind: kind,
         forceMagnitude: event.totalForceMagnitude(),

@@ -1,11 +1,13 @@
 import * as THREE from "three";
 import RAPIER from "@dimforge/rapier3d";
 import {
+  SHOE,
   bankRotation,
   floorSpans,
   moverCenterX,
   stageColliders,
   toWorld,
+  walkerFeetAt,
 } from "./stages.js";
 
 export function colliderDescFrom(RapierApi, shape) {
@@ -53,6 +55,8 @@ export function buildStage(stage, { scene, world }) {
   const disposables = [];
   const staticColliders = [];
   const movers = [];
+  const feetEntries = [];
+  const footIndexByHandle = new Map();
   const kinds = new Map();
 
   const track = (item) => {
@@ -75,6 +79,7 @@ export function buildStage(stage, { scene, world }) {
   buildProps();
   buildMovers();
   buildGate();
+  buildWalkers();
   buildShelters();
   if (stage.bank) buildBankHint();
 
@@ -377,6 +382,81 @@ export function buildStage(stage, { scene, world }) {
     group.add(line);
   }
 
+  // 行き交う人の足。床の視点では靴しか見えないので、靴と脚だけを作る。
+  function buildWalkers() {
+    const feet = walkerFeetAt(stage, 0);
+    const shoeMaterial = material({ color: 0x23272a, roughness: 0.55, metalness: 0.08 });
+    const trouserMaterial = material({ color: 0x46505a, roughness: 0.8, metalness: 0 });
+    const shadowMaterial = track(new THREE.MeshBasicMaterial({
+      color: 0x0a0d0c,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+    }));
+    const shadowGeometry = track(new THREE.CircleGeometry(0.15, 24));
+
+    feet.forEach((foot, index) => {
+      const group2 = new THREE.Group();
+      const shoe = new THREE.Mesh(
+        track(new THREE.BoxGeometry(SHOE.width, SHOE.height, SHOE.depth)),
+        shoeMaterial
+      );
+      shoe.position.y = SHOE.height / 2;
+      shoe.castShadow = true;
+      group2.add(shoe);
+      const leg = new THREE.Mesh(
+        track(new THREE.CylinderGeometry(0.052, 0.062, 1.15, 12)),
+        trouserMaterial
+      );
+      leg.position.set(0, SHOE.height + 0.55, -SHOE.depth * 0.18);
+      leg.castShadow = true;
+      group2.add(leg);
+      group.add(group2);
+
+      const shadow = new THREE.Mesh(shadowGeometry, shadowMaterial.clone());
+      disposables.push(shadow.material);
+      shadow.rotation.x = -Math.PI / 2;
+      shadow.renderOrder = 3;
+      shadow.visible = false;
+      group.add(shadow);
+
+      const body = world.createRigidBody(
+        RAPIER.RigidBodyDesc
+          .kinematicPositionBased()
+          .setTranslation(...Object.values(toWorld(stage, foot.x, SHOE.height / 2, foot.z)))
+          .setRotation(rotation)
+      );
+      const collider = world.createCollider(
+        RAPIER.ColliderDesc
+          .cuboid(SHOE.width / 2, SHOE.height / 2, SHOE.depth / 2)
+          .setFriction(0.6),
+        body
+      );
+      kinds.set(collider.handle, "shoe");
+      footIndexByHandle.set(collider.handle, index);
+      feetEntries.push({ group: group2, shadow, body });
+    });
+  }
+
+  function positionFeet(time) {
+    if (feetEntries.length === 0) return;
+    const feet = walkerFeetAt(stage, time);
+    feet.forEach((foot, index) => {
+      const entry = feetEntries[index];
+      entry.group.position.set(foot.x, foot.lift, foot.z);
+      const world3 = toWorld(stage, foot.x, SHOE.height / 2 + foot.lift, foot.z);
+      entry.body.setNextKinematicTranslation(world3);
+
+      // 影は次に降りる場所。濃くなるほど着地が近い。
+      const telegraph = foot.landingZ !== null && foot.lift > 0.01;
+      entry.shadow.visible = telegraph;
+      if (telegraph) {
+        entry.shadow.position.set(foot.x, 0.0028, foot.landingZ);
+        entry.shadow.material.opacity = 0.1 + foot.progress * 0.42;
+      }
+    });
+  }
+
   // 猫の前足が届かない隙間。床の色と縁で「ここは安全」と読めるようにする。
   function buildShelters() {
     for (const shelter of stage.shelters ?? []) {
@@ -451,10 +531,15 @@ export function buildStage(stage, { scene, world }) {
     kinds,
     update(time) {
       for (const entry of movers) positionMover(entry, time);
+      positionFeet(time);
+    },
+    footIndexFor(handle) {
+      return footIndexByHandle.get(handle);
     },
     dispose() {
       // 剛体を消すと、それに付いたコライダーも一緒に消える。
       for (const entry of movers) world.removeRigidBody(entry.body);
+      for (const entry of feetEntries) world.removeRigidBody(entry.body);
       for (const collider of staticColliders) world.removeCollider(collider, false);
       scene.remove(group);
       group.traverse((child) => {

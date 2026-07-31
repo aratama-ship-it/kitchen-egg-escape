@@ -9,6 +9,10 @@ export const IMPACT_GRACE_SECONDS = 0.45;
 // 直進する打ち方だけがこの値を大きく超える。
 export const LANDING_BREAK_SPEED = 1;
 
+// 接地した靴に対しては、通常の物体の4倍の速さで当たったときだけ割れる。
+// ゆっくり触れる・押されるは無事、全力の一打で突っ込むと割れる、の境目。
+export const SHOE_BRUSH_TOLERANCE = 4;
+
 export function shouldShatter({
   colliderKind,
   forceMagnitude,
@@ -23,6 +27,16 @@ export function shouldShatter({
   if (playAge < IMPACT_GRACE_SECONDS) return false;
   // 床は転がっているあいだずっと触れているので、落ちてきた速さだけを見る。
   if (colliderKind === "floor") return fallSpeed >= landingBreakSpeed;
+  // 降りてくる靴に踏まれたら、卵がどれだけ静かにしていても割れる。
+  if (colliderKind === "shoe-stomp") return forceMagnitude >= forceThreshold;
+  // 接地している靴は革のつま先。軽く触れたくらいでは割れず、
+  // 勢いよく突っ込んだときだけ割れる。
+  if (colliderKind === "shoe") {
+    return (
+      forceMagnitude >= forceThreshold
+      && speed >= speedThreshold * SHOE_BRUSH_TOLERANCE
+    );
+  }
   return forceMagnitude >= forceThreshold && speed >= speedThreshold;
 }
 
