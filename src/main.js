@@ -31,6 +31,8 @@ import {
   beltAt,
   beltForceOn,
   draftForceAt,
+  floorLevelAt,
+  highestFloorBetween,
   isSheltered,
   moverCenterX,
   walkerFeetAt,
@@ -84,7 +86,7 @@ const IDENTITY_ROTATION = { x: 0, y: 0, z: 0, w: 1 };
 // 画角は二つ。止まっているあいだは文字組みと釣り合う高さ、
 // 打っているあいだは卵を下へ落として、その先の床を広く見せる。
 const TITLE_FRAMING = { height: 0.075, back: 0.34, lookAhead: 0.24 };
-const PLAY_FRAMING = { height: 0.095, back: 0.34, lookAhead: 1.05 };
+const PLAY_FRAMING = { height: 0.14, back: 0.36, lookAhead: 1.05 };
 const NORMAL_EXPOSURE = 1.08;
 const SHATTER_RESULT_DELAY = 1.45;
 const REDUCE_MOTION = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -967,16 +969,34 @@ function updateCamera(dt) {
     cameraFraming
   ) * zoom;
 
+  // 床が段になっている区画では、卵の高さだけを見ていると
+  // カメラが一段上の床に埋もれて前が見えなくなる。
+  // 前後の床のうち一番高いところより、必ず上に置く。
+  const stage = currentStage();
+  const groundAround = highestFloorBetween(
+    stage,
+    position.z - back,
+    position.z + lookAhead
+  );
+  const eyeBase = Math.max(position.y, groundAround + egg.maxRadius);
+
   const targetPosition = new THREE.Vector3(
     position.x + Math.sin(breakState.age * 128) * shake,
-    Math.max(0.105 * egg.scale, position.y + height),
+    eyeBase + height,
     position.z - back + Math.cos(breakState.age * 91) * shake * 0.45
   );
   const smoothing = 1 - Math.exp(-7.5 * Math.max(dt, 1 / 120));
   camera.position.lerp(targetPosition, smoothing);
+
+  // 注視点は「これから転がっていく床」に置く。固定の高さを見ていると、
+  // 一段下りたときに上を向いてしまい、足元の先が見えなくなる。
+  const groundAhead = floorLevelAt(
+    stage,
+    Math.min(stage.length, position.z + lookAhead)
+  );
   camera.lookAt(
     position.x,
-    Math.max(0.035 * egg.scale, position.y),
+    groundAhead + 0.02 * egg.scale,
     position.z + lookAhead
   );
 }

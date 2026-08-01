@@ -590,6 +590,16 @@ export function floorSpans(stage) {
   });
 }
 
+// カメラが埋もれないよう、前後の床のうち一番高いところを返す。
+export function highestFloorBetween(stage, fromZ, toZ) {
+  let highest = -Infinity;
+  for (const section of floorSpans(stage)) {
+    if (section.toZ < fromZ || section.fromZ > toZ) continue;
+    highest = Math.max(highest, section.level);
+  }
+  return Number.isFinite(highest) ? highest : floorLevelAt(stage, fromZ);
+}
+
 export function floorLevelAt(stage, z) {
   for (const section of floorSpans(stage)) {
     if (z >= section.fromZ && z <= section.toZ) return section.level;
