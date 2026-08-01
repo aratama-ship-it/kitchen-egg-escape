@@ -397,6 +397,43 @@ export const STAGES = [
     },
   },
   {
+    id: "drain-run",
+    egg: "chicken",
+    name: "排水溝",
+    subtitle: "THE DRAIN",
+    brief: "床が抜けている。渡れるのは一枚の板だけ。越えれば一段下がり、奥は細い格子が続く。",
+    length: 4.5,
+    halfWidth: DEFAULT_HALF_WIDTH,
+    bank: 0,
+    atmosphere: { fog: 0x4a5358, key: 0xdfe6ea, ambient: 0xc6d0d4 },
+    floor: [
+      { toZ: 1.6, surface: "dry" },
+      // 溝を渡れるのは一枚の板だけ。板の幅0.30mへ寄せて入る。
+      { toZ: 1.95, surface: "dry", slots: [[-1.15, -0.25], [0.05, 1.15]] },
+      // 渡った先は一段低い。落差0.12mは実測で落下0.80 m/s、割れる境目1.00の内側。
+      { toZ: 3.0, surface: "dry", level: -0.12 },
+      // 進行方向に走る格子。桟の上を通らないと落ちる。
+      {
+        toZ: 4.1,
+        surface: "dry",
+        level: -0.12,
+        slots: [[-0.78, -0.68], [-0.28, -0.18], [0.22, 0.32], [0.72, 0.82]],
+      },
+      { toZ: 4.5, surface: "dry", level: -0.12 },
+    ],
+    props: [...counterLegs([2.4])],
+    movers: [],
+    cat: { firstAt: 7, every: 7.5, strength: 0.1 },
+    shelters: [
+      { fromX: -1.15, toX: -0.85, fromZ: 2.1, toZ: 2.7, label: "排水枡の陰" },
+      { fromX: 0.85, toX: 1.15, fromZ: 2.1, toZ: 2.7, label: "壁ぎわ" },
+    ],
+    clear: {
+      title: "溝を越えた。",
+      message: "下からは、水の音だけ。",
+    },
+  },
+  {
     id: "belt-line",
     egg: "chicken",
     name: "洗浄ベルト",
@@ -420,6 +457,8 @@ export const STAGES = [
       // 一打(0.38m/1.7秒)に対し、この速さなら1打あたり+0.18mだけ前へ出る。
       // 遅いが通れる＝「押し切るか、迂回するか」の選択になる。
       { fromX: -0.6, toX: 0.6, fromZ: 1.6, toZ: 3.1, speedX: 0, speedZ: -0.12, grip: 2.6 },
+      // 横へ流れる帯。まっすぐ撞くと流されるので、上流へ向けて狙う。
+      { fromX: -1.15, toX: 1.15, fromZ: 3.6, toZ: 4.4, speedX: 0.16, speedZ: 0, grip: 2.6 },
     ],
     cat: { firstAt: 6.5, every: 7, strength: 0.1 },
     shelters: [
@@ -541,10 +580,34 @@ export function floorSpans(stage) {
       toZ: section.toZ,
       surface: section.surface,
       friction: SURFACE_FRICTION[section.surface],
+      // 床の高さ。負なら一段低い＝落ちる先になる。
+      level: section.level ?? 0,
+      // 床が抜けている帯（排水溝）。[fromX, toX] の並び。
+      slots: section.slots ?? [],
     };
     fromZ = section.toZ;
     return span;
   });
+}
+
+export function floorLevelAt(stage, z) {
+  for (const section of floorSpans(stage)) {
+    if (z >= section.fromZ && z <= section.toZ) return section.level;
+  }
+  return floorSpans(stage)[0].level;
+}
+
+// 床が残っている部分（スリットを除いた実体）を左から順に返す。
+export function floorRibsOf(section, halfWidth) {
+  if (section.slots.length === 0) return [[-halfWidth, halfWidth]];
+  const ribs = [];
+  let cursor = -halfWidth;
+  for (const [from, to] of [...section.slots].sort((a, b) => a[0] - b[0])) {
+    if (from > cursor) ribs.push([cursor, from]);
+    cursor = Math.max(cursor, to);
+  }
+  if (cursor < halfWidth) ribs.push([cursor, halfWidth]);
+  return ribs;
 }
 
 export function surfaceAt(stage, z) {
@@ -575,7 +638,8 @@ export const START_Z = 0.3;
 // 重心を偏らせても転がらずその場で止まってしまう。
 export function stageStartPosition(stage) {
   const egg = eggProfile(stage.egg);
-  return toWorld(stage, 0, egg.maxRadius + 0.001, START_Z);
+  const level = floorLevelAt(stage, START_Z);
+  return toWorld(stage, 0, level + egg.maxRadius + 0.001, START_Z);
 }
 
 export function stageStartRotation(stage) {
@@ -646,6 +710,12 @@ export function blockedSpansAt(stage, z, time = 0) {
     spans.push([centerX - mover.width / 2, centerX + mover.width / 2]);
   }
 
+  // 床が抜けているところは、通れない場所として扱う。
+  for (const section of floorSpans(stage)) {
+    if (z < section.fromZ || z > section.toZ) continue;
+    for (const [fromX, toX] of section.slots) spans.push([fromX, toX]);
+  }
+
   // 足は「いま低い位置」だけでなく「次に降りる場所」も塞いでいる扱いにする。
   // 振り上げ中の足は床の影が着地点を示しており、そこへ入るのは踏まれに行くこと。
   for (const foot of walkerFeetAt(stage, time)) {
@@ -710,15 +780,21 @@ export function stageColliders(stage) {
 
   for (const section of floorSpans(stage)) {
     const depth = section.toZ - section.fromZ;
-    place(
-      { shape: "cuboid", halfExtents: { x: stage.halfWidth, y: 0.025, z: depth / 2 } },
-      "floor",
-      0,
-      -0.025,
-      (section.fromZ + section.toZ) / 2,
-      section.friction,
-      0.02
-    );
+    // スリットのある区間は、残っている桟だけを床として置く。
+    for (const [fromX, toX] of floorRibsOf(section, stage.halfWidth)) {
+      place(
+        {
+          shape: "cuboid",
+          halfExtents: { x: (toX - fromX) / 2, y: 0.025, z: depth / 2 },
+        },
+        "floor",
+        (fromX + toX) / 2,
+        section.level - 0.025,
+        (section.fromZ + section.toZ) / 2,
+        section.friction,
+        0.02
+      );
+    }
   }
 
   [-1, 1].forEach((side) => {
@@ -828,6 +904,16 @@ export function validateStage(stage) {
     problems.push(`${stage.id}: 猫がいるのに逃げ場がない`);
   }
 
+  for (const section of floorSpans(stage)) {
+    if (section.slots.length === 0) continue;
+    const widest = Math.max(
+      ...floorRibsOf(section, stage.halfWidth).map(([a, b]) => b - a)
+    );
+    if (widest < egg.clearance) {
+      problems.push(`${stage.id}: 格子の桟が ${widest.toFixed(2)} m しかない`);
+    }
+  }
+
   for (const belt of stage.belts ?? []) {
     if (belt.fromZ >= belt.toZ || belt.fromX >= belt.toX) {
       problems.push(`${stage.id}: ベルトの範囲が逆さま`);
@@ -839,13 +925,16 @@ export function validateStage(stage) {
       || Math.abs(belt.toX) > stage.halfWidth + 0.01) {
       problems.push(`${stage.id}: ベルトが床の外にある`);
     }
-    // 帯の外を通って抜けられること。全面ベルトは逃げ場がなくなる。
-    const clear = Math.max(
-      belt.fromX + stage.halfWidth,
-      stage.halfWidth - belt.toX
-    );
-    if (clear < egg.clearance) {
-      problems.push(`${stage.id}: ベルトを避けて通れる幅がない`);
+    // 進行を妨げる向きの帯は、避けて通れる道が要る。
+    // 横へ流す帯は渡ること自体が課題なので、全面でよい。
+    if (belt.speedZ < 0) {
+      const clear = Math.max(
+        belt.fromX + stage.halfWidth,
+        stage.halfWidth - belt.toX
+      );
+      if (clear < egg.clearance) {
+        problems.push(`${stage.id}: ベルトを避けて通れる幅がない`);
+      }
     }
   }
 

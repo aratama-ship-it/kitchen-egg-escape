@@ -4,6 +4,7 @@ import {
   SHOE,
   bankRotation,
   beltAt,
+  floorRibsOf,
   floorSpans,
   moverCenterX,
   stageColliders,
@@ -92,14 +93,39 @@ export function buildStage(stage, { scene, world }) {
       const centerZ = (section.fromZ + section.toZ) / 2;
       const look = SURFACE_LOOK[section.surface];
 
-      const plane = new THREE.Mesh(
-        track(new THREE.PlaneGeometry(stage.halfWidth * 2, depth)),
-        material(look)
-      );
-      plane.rotation.x = -Math.PI / 2;
-      plane.position.set(0, 0, centerZ);
-      plane.receiveShadow = true;
-      group.add(plane);
+      // 床が抜けている区間は、残っている桟だけを描く。
+      for (const [fromX, toX] of floorRibsOf(section, stage.halfWidth)) {
+        const plane = new THREE.Mesh(
+          track(new THREE.PlaneGeometry(toX - fromX, depth)),
+          material(look)
+        );
+        plane.rotation.x = -Math.PI / 2;
+        plane.position.set((fromX + toX) / 2, section.level, centerZ);
+        plane.receiveShadow = true;
+        group.add(plane);
+      }
+
+      // 段差の立ち上がり。落差があることを side から見せる。
+      if (section.level < 0) {
+        const riser = new THREE.Mesh(
+          track(new THREE.BoxGeometry(stage.halfWidth * 2, -section.level, 0.02)),
+          material({ color: 0x232b2a, roughness: 0.7, metalness: 0.1 })
+        );
+        riser.position.set(0, section.level / 2, section.fromZ);
+        riser.receiveShadow = true;
+        group.add(riser);
+      }
+
+      // 抜けている部分の底。暗い穴として見せる。
+      for (const [fromX, toX] of section.slots) {
+        const pit = new THREE.Mesh(
+          track(new THREE.PlaneGeometry(toX - fromX, depth)),
+          track(new THREE.MeshBasicMaterial({ color: 0x080b0c }))
+        );
+        pit.rotation.x = -Math.PI / 2;
+        pit.position.set((fromX + toX) / 2, section.level - 0.09, centerZ);
+        group.add(pit);
+      }
 
       if (section.surface === "wet") buildPuddles(section);
       if (section.surface === "grease") buildSheen(section, 0x6d5c33, 0.16);
