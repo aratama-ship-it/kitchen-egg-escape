@@ -397,6 +397,41 @@ export const STAGES = [
     },
   },
   {
+    id: "belt-line",
+    egg: "chicken",
+    name: "洗浄ベルト",
+    subtitle: "THE BELT",
+    brief: "食器を戻すベルトが逆へ流れている。乗れば運ばれる。上流へ撞くか、脇を行くか。",
+    length: 4.8,
+    halfWidth: DEFAULT_HALF_WIDTH,
+    bank: 0,
+    atmosphere: { fog: 0x4d5b60, key: 0xe8f0f4, ambient: 0xccd8dd },
+    floor: [{ toZ: 4.8, surface: "dry" }],
+    props: [
+      ...counterLegs([1.0, 3.6]),
+      // ベルトの縁。乗り上げるのではなく、脇から入る。
+      { kind: "belt-rail", look: "steel", x: -0.62, z: 2.35, width: 0.05, depth: 1.5, height: 0.045 },
+      { kind: "belt-rail", look: "steel", x: 0.62, z: 2.35, width: 0.05, depth: 1.5, height: 0.045 },
+    ],
+    movers: [],
+    // 通路の中央を、手前向きに流れる帯が占める。
+    // 左右にはそれぞれ0.5mの通り道が残る。
+    belts: [
+      // 一打(0.38m/1.7秒)に対し、この速さなら1打あたり+0.18mだけ前へ出る。
+      // 遅いが通れる＝「押し切るか、迂回するか」の選択になる。
+      { fromX: -0.6, toX: 0.6, fromZ: 1.6, toZ: 3.1, speedX: 0, speedZ: -0.12, grip: 2.6 },
+    ],
+    cat: { firstAt: 6.5, every: 7, strength: 0.1 },
+    shelters: [
+      { fromX: -1.15, toX: -0.7, fromZ: 1.4, toZ: 2.0, label: "ラックの陰" },
+      { fromX: 0.7, toX: 1.15, fromZ: 2.8, toZ: 3.4, label: "洗い桶の陰" },
+    ],
+    clear: {
+      title: "流れを渡った。",
+      message: "ベルトは、まだ回っている。",
+    },
+  },
+  {
     id: "pipe-run",
     egg: "chicken",
     name: "配管の裏",
@@ -550,6 +585,33 @@ export function stageStartRotation(stage) {
 
 // 換気扇が横から吸う力。傾きだけでは卵はほとんど流れないと実測で分かったため、
 // 「押し戻し続ける」感触はこの力で作る。単位はニュートン、正が+x方向。
+// ベルトコンベア。帯の上にいるあいだ、床そのものが卵を運ぶ。
+// 撞く力ではなく床から受ける力なので、乗っているだけで流される。
+// 上流へ向けて撞かないと、進むどころか戻される。
+export function beltAt(stage, x, z) {
+  for (const belt of stage.belts ?? []) {
+    if (
+      z >= belt.fromZ && z <= belt.toZ
+      && x >= belt.fromX && x <= belt.toX
+    ) return belt;
+  }
+  return null;
+}
+
+// 帯の上での床の速さ。卵の速度がこれに追いつくまで引きずられる。
+export function beltForceOn(stage, position, velocity, mass) {
+  const belt = beltAt(stage, position.x, position.z);
+  if (!belt) return null;
+  // 床と卵の速度差に比例した引きずり。追いついたらそれ以上は押さない。
+  const slipX = belt.speedX - velocity.x;
+  const slipZ = belt.speedZ - velocity.z;
+  const grip = belt.grip ?? 2.6;
+  return {
+    x: slipX * grip * mass,
+    z: slipZ * grip * mass,
+  };
+}
+
 export function draftForceAt(stage, z) {
   const draft = stage.draft;
   if (!draft) return 0;
@@ -764,6 +826,27 @@ export function validateStage(stage) {
   }
   if (stage.cat && (stage.shelters ?? []).length === 0) {
     problems.push(`${stage.id}: 猫がいるのに逃げ場がない`);
+  }
+
+  for (const belt of stage.belts ?? []) {
+    if (belt.fromZ >= belt.toZ || belt.fromX >= belt.toX) {
+      problems.push(`${stage.id}: ベルトの範囲が逆さま`);
+    }
+    if (belt.toZ > stage.length || belt.fromZ < 0) {
+      problems.push(`${stage.id}: ベルトが区画の外にある`);
+    }
+    if (Math.abs(belt.fromX) > stage.halfWidth + 0.01
+      || Math.abs(belt.toX) > stage.halfWidth + 0.01) {
+      problems.push(`${stage.id}: ベルトが床の外にある`);
+    }
+    // 帯の外を通って抜けられること。全面ベルトは逃げ場がなくなる。
+    const clear = Math.max(
+      belt.fromX + stage.halfWidth,
+      stage.halfWidth - belt.toX
+    );
+    if (clear < egg.clearance) {
+      problems.push(`${stage.id}: ベルトを避けて通れる幅がない`);
+    }
   }
 
   for (const walker of stage.walkers ?? []) {

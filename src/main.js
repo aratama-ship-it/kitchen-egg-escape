@@ -28,6 +28,8 @@ import {
   STAGES,
   SURFACE_FRICTION,
   WORLD_GRAVITY,
+  beltAt,
+  beltForceOn,
   draftForceAt,
   isSheltered,
   moverCenterX,
@@ -658,6 +660,20 @@ function physicsStep() {
   }
   const draft = draftForceAt(currentStage(), eggBody.translation().z);
   if (draft) eggBody.applyImpulse({ x: draft * FIXED_STEP, y: 0, z: 0 }, true);
+
+  // ベルトの上では、床そのものが卵を運ぶ。
+  const beltForce = beltForceOn(
+    currentStage(),
+    eggBody.translation(),
+    eggBody.linvel(),
+    egg.shellMass + egg.yolkMass
+  );
+  if (beltForce) {
+    eggBody.applyImpulse(
+      { x: beltForce.x * FIXED_STEP, y: 0, z: beltForce.z * FIXED_STEP },
+      true
+    );
+  }
 
   const velocityBeforeStep = eggBody.linvel();
   const speedBeforeStep = Math.hypot(
@@ -1382,7 +1398,10 @@ function updateHud() {
   ) * 1000;
   const progress = THREE.MathUtils.clamp((position.z / stage.length) * 100, 0, 100);
   progressFill.style.width = `${progress.toFixed(1)}%`;
-  const surface = SURFACE_LABEL[surfaceAt(stage, Math.max(0, position.z))] ?? "";
+  const onBelt = beltAt(stage, position.x, position.z);
+  const surface = onBelt
+    ? "流れるベルトの上"
+    : SURFACE_LABEL[surfaceAt(stage, Math.max(0, position.z))] ?? "";
   const sheltered = isSheltered(stage, position.x, position.z);
   const catComing = stage.cat && cat.warning;
   catHint.classList.toggle("is-visible", Boolean(catComing) && !sheltered);

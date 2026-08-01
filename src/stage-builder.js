@@ -3,6 +3,7 @@ import RAPIER from "@dimforge/rapier3d";
 import {
   SHOE,
   bankRotation,
+  beltAt,
   floorSpans,
   moverCenterX,
   stageColliders,
@@ -53,6 +54,7 @@ export function buildStage(stage, { scene, world }) {
   scene.add(group);
 
   const disposables = [];
+  const beltSlats = [];
   const staticColliders = [];
   const movers = [];
   const feetEntries = [];
@@ -79,6 +81,7 @@ export function buildStage(stage, { scene, world }) {
   buildProps();
   buildMovers();
   buildGate();
+  buildBelts();
   buildWalkers();
   buildShelters();
   if (stage.bank) buildBankHint();
@@ -382,6 +385,57 @@ export function buildStage(stage, { scene, world }) {
     group.add(line);
   }
 
+  // ベルトコンベア。動いていることが一目で分かるよう、
+  // 帯の表面に横桟を並べて流す。桟の動きがそのまま流れの向きと速さになる。
+  function buildBelts() {
+    for (const belt of stage.belts ?? []) {
+      const width = belt.toX - belt.fromX;
+      const depth = belt.toZ - belt.fromZ;
+      const centerX = (belt.fromX + belt.toX) / 2;
+      const centerZ = (belt.fromZ + belt.toZ) / 2;
+
+      const deck = new THREE.Mesh(
+        track(new THREE.PlaneGeometry(width, depth)),
+        material({ color: 0x2f3a3d, roughness: 0.5, metalness: 0.35 })
+      );
+      deck.rotation.x = -Math.PI / 2;
+      deck.position.set(centerX, 0.0035, centerZ);
+      deck.receiveShadow = true;
+      group.add(deck);
+
+      const slatGeometry = track(new THREE.BoxGeometry(width - 0.02, 0.012, 0.05));
+      const slatMaterial = material({
+        color: 0x525f63,
+        roughness: 0.42,
+        metalness: 0.5,
+      });
+      const spacing = 0.22;
+      const count = Math.ceil(depth / spacing) + 1;
+      for (let index = 0; index < count; index += 1) {
+        const slat = new THREE.Mesh(slatGeometry, slatMaterial);
+        slat.position.set(centerX, 0.008, belt.fromZ + index * spacing);
+        slat.castShadow = true;
+        group.add(slat);
+        beltSlats.push({ slat, belt, spacing, count });
+      }
+    }
+  }
+
+  function positionBeltSlats(time) {
+    for (const entry of beltSlats) {
+      const { belt, spacing } = entry;
+      const span = belt.toZ - belt.fromZ;
+      // 流れる向きへ動かし、端まで行ったら反対の端へ戻す。
+      const drift = ((belt.speedZ * time) % span + span) % span;
+      const base = entry.slat.userData.baseZ ?? entry.slat.position.z;
+      entry.slat.userData.baseZ = base;
+      let z = base + drift;
+      if (z > belt.toZ) z -= span;
+      if (z < belt.fromZ) z += span;
+      entry.slat.position.z = z;
+    }
+  }
+
   // 行き交う人の足。床の視点では靴しか見えないので、靴と脚だけを作る。
   function buildWalkers() {
     const feet = walkerFeetAt(stage, 0);
@@ -532,6 +586,7 @@ export function buildStage(stage, { scene, world }) {
     update(time) {
       for (const entry of movers) positionMover(entry, time);
       positionFeet(time);
+      positionBeltSlats(time);
     },
     footIndexFor(handle) {
       return footIndexByHandle.get(handle);
